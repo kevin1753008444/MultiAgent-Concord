@@ -1,0 +1,23 @@
+# API keys & secrets
+.env
+.env.local
+.env.*.local
+
+# Runtime data
+data/chroma_db/
+data/concord.db
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node
+node_modules/
+frontend/dist/
+
+# IDE & tools
+.claude/
+.vscode/
+*.swp
