@@ -10,6 +10,7 @@ from backend.agents.agent_town import AgentTown
 from backend.core.routing_engine import RoutingEngine
 from backend.services.gemini_service import GeminiService
 from backend.services.weather_service import WeatherService
+from backend.services.elevenlabs_service import ElevenLabsService, log_available_voices
 from backend.core.stance_guard import StanceGuard
 from backend.rag.vector_store import VectorStore
 from backend.rag.retriever import Retriever
@@ -26,6 +27,7 @@ class Orchestrator:
         self.broadcast = broadcast_fn
         self.gemini = GeminiService()
         self.weather_svc = WeatherService()
+        self.tts = ElevenLabsService()
         self.guard = StanceGuard()
         self.router = RoutingEngine()
 
@@ -49,28 +51,36 @@ class Orchestrator:
     # ─── Public API ───────────────────────────────────────────────
 
     async def ensure_rag_initialized(self) -> dict[str, int]:
-        """首次调用时自动向量化现有知识库文件"""
+        """RAG disabled — skipping embedding init."""
         if self._rag_initialized:
             return {}
         self._rag_initialized = True
-        logger.info("Initializing RAG knowledgebases...")
-        result = await self.retriever.init_all_knowledgebases()
-        logger.info(f"RAG init complete: {result}")
-        return result
+        await log_available_voices()
+        return {}
 
     async def trigger_one_turn(self, force_speaker: str | None = None) -> None:
         """触发一轮对话"""
-        # 确保 RAG 已初始化
-        await self.ensure_rag_initialized()
-
-        weather = await self.weather_svc.get_current_weather()
-        await self.broadcast({"type": "weather_update", "data": weather.model_dump(mode="json")})
+        # Weather API disabled — use a neutral stub so agents still receive the field
+        weather = WeatherData(
+            condition="Clear",
+            description="weather disabled",
+            temp_f=55.0,
+            temp_c=12.8,
+            humidity=50,
+            wind_speed=0.0,
+            local_time=datetime.now(timezone.utc),
+            time_str=datetime.now(timezone.utc).strftime("%H:%M"),
+            is_late_night=False,
+            is_heavy_rain=False,
+            pressure_hpa=1013,
+        )
 
         # 决定发言者
         if force_speaker:
             next_speaker = force_speaker
             weights = {}
         elif not self.speaker_history:
+            # First turn always starts the rotation from Developer
             next_speaker = "Agent_Developer"
             weights = {}
         else:
@@ -97,7 +107,12 @@ class Orchestrator:
                 weights = {}
 
         agent = self.agents[next_speaker]
+
+        # Broadcast typing indicator immediately — before any slow I/O
         await self.broadcast({"type": "agent_thinking", "agent_id": next_speaker})
+
+        # One-time init (voice list log etc.) — runs after typing indicator is visible
+        await self.ensure_rag_initialized()
 
         # RAG 检索：用最近 3 条对话作为 query
         rag_chunks = await self._retrieve_for_agent(next_speaker)
@@ -111,6 +126,9 @@ class Orchestrator:
         if response is None:
             await self._broadcast_silence(next_speaker, weather)
             return
+
+        # TTS — runs concurrently with debug broadcast prep; fails silently
+        audio_data = await self.tts.synthesize(response.speech, next_speaker)
 
         if DEBUG and weights:
             await self.broadcast({
@@ -135,7 +153,7 @@ class Orchestrator:
 
         self._last_speaker = next_speaker
 
-        await self.broadcast({
+        payload: dict = {
             "type": "agent_message",
             "agent_id": next_speaker,
             "speech": response.speech,
@@ -149,7 +167,10 @@ class Orchestrator:
                 "time_str": weather.time_str,
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
+        }
+        if audio_data:
+            payload["audio_data"] = audio_data
+        await self.broadcast(payload)
 
     async def start_auto_mode(self, interval: int = AUTO_MODE_INTERVAL) -> None:
         if self._auto_task and not self._auto_task.done():
@@ -173,22 +194,8 @@ class Orchestrator:
     # ─── Internal ─────────────────────────────────────────────────
 
     async def _retrieve_for_agent(self, agent_id: str) -> list[str]:
-        """用最近对话构建 query，检索该 Agent 的知识库"""
-        if not self.history:
-            # 无历史时，用 Agent 名称作为初始 query
-            query = f"{agent_id} opening statement MCI Concord"
-        else:
-            recent = self.history[-3:]
-            query = " ".join(m.speech for m in recent)
-            # 截断避免 embedding 输入过长
-            if len(query) > 1000:
-                query = query[:1000]
-
-        try:
-            return await self.retriever.retrieve(agent_id, query)
-        except Exception as e:
-            logger.warning(f"RAG retrieve failed for {agent_id}: {e}")
-            return []
+        """RAG disabled — returns empty until re-enabled."""
+        return []
 
     async def _auto_loop(self, interval: int) -> None:
         try:

@@ -23,7 +23,7 @@ FORMAT_REQUIREMENT = """\
 === OUTPUT FORMAT ===
 Respond ONLY with a valid JSON object. No text outside the JSON. Schema:
 {
-  "speech": "<your actual spoken words, in character>",
+  "speech": "<your spoken words, in character — 2 to 4 short conversational sentences MAXIMUM. No paragraphs. Speak like a person, not a document.>",
   "directed_at": "<Agent_Prison|Agent_Developer|Agent_Town|ALL|NONE>",
   "emotional_state": "<DEFIANT|THREATENING|PLEADING|CALCULATING|NEGOTIATING|DISMISSIVE|ALARMED>",
   "urgency_score": <integer 1-10>,

@@ -8,6 +8,17 @@ load_dotenv(BASE_DIR / ".env")
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY", "")
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
+
+# ElevenLabs voice IDs per agent
+# Prison  → Adam  (deep, worn)
+# Developer → Arnold (crisp, authoritative)
+# Town    → Thomas (measured, calm)
+ELEVENLABS_VOICES: dict[str, str] = {
+    "Agent_Prison":    "CwhRBWXzGAHq8TQ4Fs17",  # Roger
+    "Agent_Developer": "IKne3meq5aSn9XLyUdCD", #Charlie
+    "Agent_Town":      "cgSgspJ2msm6clMCkdW9", # Jessica
+}
 
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR}/data/concord.db")
 CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", str(BASE_DIR / "data" / "chroma_db"))
@@ -41,8 +52,13 @@ RAG_KNOWLEDGEBASE_DIR = os.getenv(
 
 BOSTON_COORDS = {"lat": 42.3601, "lon": -71.0589}
 WEATHER_CACHE_TTL = 300  # 5 minutes
+WEATHER_ENABLED = os.getenv("WEATHER_ENABLED", "false").lower() == "true"
 
 GEMINI_MODEL = "gemini-2.5-flash"
 GEMINI_EMBEDDING_MODEL = "models/gemini-embedding-001"
 
 SILENCE_FALLBACK = "[天空一阵沉寂，时间暂时凝固。]"
+
+# When True, routing uses equal weights (bypasses emotional/weather modifiers).
+# Ensures all agents — especially Prison — get regular turns.
+RANDOM_ROUTING = os.getenv("RANDOM_ROUTING", "true").lower() == "true"

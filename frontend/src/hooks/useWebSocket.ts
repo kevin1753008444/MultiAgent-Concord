@@ -4,9 +4,30 @@ import type { WsMessage } from '../types'
 
 const WS_URL = `ws://${window.location.host}/ws`
 
+// ── Audio queue ────────────────────────────────────────────────────────────
+// Plays base64 MP3 clips sequentially so agent voices never overlap.
+const audioQueue: string[] = []
+let audioPlaying = false
+
+function enqueueAudio(base64Mp3: string) {
+  audioQueue.push(base64Mp3)
+  if (!audioPlaying) drainQueue()
+}
+
+function drainQueue() {
+  const next = audioQueue.shift()
+  if (!next) { audioPlaying = false; return }
+  audioPlaying = true
+  const audio = new Audio(`data:audio/mpeg;base64,${next}`)
+  audio.onended = drainQueue
+  audio.onerror = drainQueue  // skip broken clips, keep going
+  audio.play().catch(drainQueue)
+}
+// ──────────────────────────────────────────────────────────────────────────
+
 export function useWebSocket() {
   const wsRef = useRef<WebSocket | null>(null)
-  const { addMessage, setThinking, setWeather, reset } = useConversationStore()
+  const { addMessage, setThinking, setWeather, setWsConnected, reset } = useConversationStore()
 
   const handleMessage = useCallback((event: MessageEvent) => {
     try {
@@ -14,6 +35,7 @@ export function useWebSocket() {
       switch (data.type) {
         case 'agent_message':
           addMessage(data)
+          if (data.audio_data) enqueueAudio(data.audio_data)
           break
         case 'agent_thinking':
           setThinking(data.agent_id)
@@ -34,11 +56,12 @@ export function useWebSocket() {
     const ws = new WebSocket(WS_URL)
     wsRef.current = ws
     ws.onmessage = handleMessage
-    ws.onopen = () => console.log('WS connected')
+    ws.onopen = () => { setWsConnected(true); console.log('WS connected') }
+    ws.onclose = () => setWsConnected(false)
     ws.onerror = (e) => console.error('WS error', e)
 
     return () => ws.close()
-  }, [handleMessage])
+  }, [handleMessage, setWsConnected])
 
   const send = useCallback((data: object) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {

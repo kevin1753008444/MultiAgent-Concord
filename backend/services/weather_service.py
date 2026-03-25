@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 import httpx
-from backend.config import OPENWEATHER_API_KEY, BOSTON_COORDS, WEATHER_CACHE_TTL
+from backend.config import OPENWEATHER_API_KEY, BOSTON_COORDS, WEATHER_CACHE_TTL, WEATHER_ENABLED
 from backend.models.schemas import WeatherData
 
 logger = logging.getLogger(__name__)
@@ -15,6 +15,9 @@ class WeatherService:
         self._cache_time: float = 0
 
     async def get_current_weather(self) -> WeatherData:
+        if not WEATHER_ENABLED:
+            return self._make_fallback()
+
         now = time.time()
         if self._cache and (now - self._cache_time) < WEATHER_CACHE_TTL:
             return self._cache

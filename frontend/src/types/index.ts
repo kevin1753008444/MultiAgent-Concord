@@ -12,6 +12,7 @@ export interface AgentMessage {
   implicit_challenge_to: AgentId | null
   weather_snapshot: WeatherSnapshot
   timestamp: string
+  audio_data?: string  // base64 MP3 from ElevenLabs, optional
 }
 
 export interface WeatherSnapshot {
