@@ -4,7 +4,7 @@ import type { AgentId } from '../types'
 
 const AGENTS: { id: AgentId; label: string }[] = [
   { id: 'Agent_Prison', label: 'PRISON' },
-  { id: 'Agent_Developer', label: 'DEV' },
+  { id: 'Agent_Developer', label: 'DEVELOPER' },
   { id: 'Agent_Town', label: 'TOWN' },
 ]
 
@@ -17,8 +17,8 @@ export default function AgentIndicator() {
         const isThinking = thinkingAgent === id
         return (
           <div key={id} className="flex items-center gap-2">
-            <div className={`w-1.5 h-1.5 rounded-full ${isThinking ? 'bg-primary' : 'bg-muted'}`} />
-            <span className={`text-xs font-mono tracking-widest ${isThinking ? 'text-primary' : 'text-secondary'}`}>
+            <div className={`w-2 h-2 rounded-full ${isThinking ? 'bg-primary' : 'bg-thinking'}`} />
+            <span className={`text-sm font-mono tracking-widest ${isThinking ? 'text-primary' : 'text-muted'}`}>
               {label}
             </span>
             {isThinking && <ThinkingDots />}

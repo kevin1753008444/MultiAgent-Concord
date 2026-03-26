@@ -39,15 +39,15 @@ export default function ChatPage() {
       <WeatherBar />
 
       {/* 主内容区：天气栏 32px + 指示器 ~48px = 80px 顶部偏移 */}
-      <div className="flex flex-col flex-1 pt-8">
+      <div className="flex flex-col flex-1 pt-10">
         <AgentIndicator />
 
         {/* 消息列表 */}
         <div className="flex-1 overflow-y-auto px-8 py-6 flex flex-col">
           {messages.length === 0 && (
-            <p className="text-muted text-xs font-mono text-center mt-20 tracking-widest">
+            <p className="text-secondary text-sm font-mono text-center mt-20 tracking-widest">
               — SILENCE —<br />
-              <span className="text-[#1a1a1a] mt-2 block">press start to begin the negotiation</span>
+              <span className="text-muted mt-2 block">press START AUTO or NEXT TURN to begin the negotiation</span>
             </p>
           )}
           {messages.map((msg, i) => (
@@ -61,33 +61,33 @@ export default function ChatPage() {
           {!isAutoMode ? (
             <button
               onClick={handleStartAuto}
-              className="text-xs font-mono tracking-widest text-secondary border border-border px-4 py-1.5 hover:border-secondary hover:text-primary transition-colors"
+              className="text-sm font-mono tracking-widest text-secondary border border-border px-4 py-1.5 hover:border-secondary hover:text-primary transition-colors"
             >
               START AUTO
             </button>
           ) : (
             <button
               onClick={handleStop}
-              className="text-xs font-mono tracking-widest text-secondary border border-border px-4 py-1.5 hover:border-secondary hover:text-primary transition-colors"
+              className="text-sm font-mono tracking-widest text-secondary border border-border px-4 py-1.5 hover:border-secondary hover:text-primary transition-colors"
             >
               STOP
             </button>
           )}
           <button
             onClick={handleTrigger}
-            className="text-xs font-mono tracking-widest text-secondary border border-border px-4 py-1.5 hover:border-secondary hover:text-primary transition-colors"
+            className="text-sm font-mono tracking-widest text-secondary border border-border px-4 py-1.5 hover:border-secondary hover:text-primary transition-colors"
           >
             NEXT TURN
           </button>
           <button
             onClick={handleReset}
-            className="text-xs font-mono tracking-widest text-muted px-4 py-1.5 hover:text-secondary transition-colors ml-auto"
+            className="text-sm font-mono tracking-widest text-muted px-4 py-1.5 hover:text-secondary transition-colors ml-auto"
           >
             RESET
           </button>
           <a
             href="/admin"
-            className="text-xs font-mono tracking-widest text-muted hover:text-secondary transition-colors"
+            className="text-sm font-mono tracking-widest text-muted hover:text-secondary transition-colors"
           >
             ADMIN →
           </a>

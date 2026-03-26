@@ -2,7 +2,7 @@ import type { AgentMessage } from '../types'
 
 const AGENT_LABELS: Record<string, string> = {
   Agent_Prison: 'PRISON',
-  Agent_Developer: 'DEV',
+  Agent_Developer: 'DEVELOPER',
   Agent_Town: 'TOWN',
 }
 
@@ -30,27 +30,27 @@ export default function MessageBubble({ msg }: { msg: AgentMessage }) {
   const directedLabel = isDirected ? AGENT_LABELS[msg.directed_at] ?? msg.directed_at : null
 
   return (
-    <div className={`flex flex-col max-w-xl animate-fade-in ${getBubbleStyle(msg.agent_id)} mb-6`}>
+    <div className={`flex flex-col max-w-2xl animate-fade-in ${getBubbleStyle(msg.agent_id)} mb-8`}>
       {/* Header row */}
-      <div className="flex items-baseline gap-2 mb-1">
-        <span className="text-xs text-secondary tracking-widest font-mono">[{label}]</span>
-        <span className="text-xs text-muted font-mono">— {msg.emotional_state} {urgency}{msg.urgency_score}</span>
+      <div className="flex items-baseline gap-3 mb-2">
+        <span className="text-base text-primary tracking-widest font-mono font-semibold">[{label}]</span>
+        <span className="text-sm text-secondary font-mono">{msg.emotional_state} · urgency {msg.urgency_score} {urgency}</span>
       </div>
 
       {/* Speech */}
-      <p className="text-primary text-sm leading-relaxed font-mono whitespace-pre-wrap">
+      <p className="text-primary text-base leading-loose font-mono whitespace-pre-wrap">
         {msg.speech}
       </p>
 
       {/* Footer row */}
-      <div className="flex items-center gap-3 mt-2">
+      <div className="flex items-center gap-3 mt-3">
         {directedLabel && (
-          <span className="text-xs text-muted font-mono">→ {directedLabel}</span>
+          <span className="text-sm text-muted font-mono">→ {directedLabel}</span>
         )}
         {msg.directed_at === 'ALL' && (
-          <span className="text-xs text-muted font-mono">→ ALL</span>
+          <span className="text-sm text-muted font-mono">→ ALL</span>
         )}
-        <span className="text-xs text-muted font-mono ml-auto">
+        <span className="text-sm text-muted font-mono ml-auto">
           {msg.weather_snapshot?.time_str} · {msg.weather_snapshot?.condition} {msg.weather_snapshot?.temp_f}°F
         </span>
       </div>
