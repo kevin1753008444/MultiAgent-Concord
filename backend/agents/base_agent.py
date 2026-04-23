@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from backend.models.schemas import AgentResponse, WeatherData, Message
+from backend.models.schemas import AgentResponse, WeatherData, Message, NegotiationPhase
 from backend.services.gemini_service import GeminiService
 from backend.core.prompt_assembler import assemble
 from backend.core.stance_guard import StanceGuard
@@ -20,14 +20,15 @@ class BaseAgent:
         self._system_prompt: str | None = None
 
     def get_system_prompt(self) -> str:
-        if self._system_prompt is None:
-            path = Path(KNOWLEDGEBASE_PATH) / self.system_prompt_file
-            if path.exists():
-                self._system_prompt = path.read_text(encoding="utf-8")
-            else:
-                logger.warning(f"System prompt file not found: {path}")
-                self._system_prompt = f"You are {self.agent_id}. Maintain your role."
-        return self._system_prompt
+        # If manually set via admin panel, use that
+        if self._system_prompt is not None:
+            return self._system_prompt
+        # Otherwise read from disk every time so file edits take effect immediately
+        path = Path(KNOWLEDGEBASE_PATH) / self.system_prompt_file
+        if path.exists():
+            return path.read_text(encoding="utf-8")
+        logger.warning(f"System prompt file not found: {path}")
+        return f"You are {self.agent_id}. Maintain your role."
 
     def set_system_prompt(self, prompt: str) -> None:
         """Admin 面板更新时调用"""
@@ -38,6 +39,7 @@ class BaseAgent:
         history: list[Message],
         weather: WeatherData,
         rag_chunks: list[str] | None = None,
+        phase: NegotiationPhase = NegotiationPhase.DEBATE,
     ) -> AgentResponse | None:
         """
         生成一条发言，含立场验证和重试逻辑。
@@ -58,6 +60,7 @@ class BaseAgent:
                 weather=weather,
                 history=history,
                 rag_chunks=chunks,
+                phase=phase,
             )
 
             # 立场违规时提高 temperature

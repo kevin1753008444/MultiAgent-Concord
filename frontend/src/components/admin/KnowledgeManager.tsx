@@ -1,4 +1,5 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
+import { useRef } from 'react'
 
 const AGENTS = ['Agent_Prison', 'Agent_Developer', 'Agent_Town'] as const
 const LABELS: Record<string, string> = {
@@ -7,46 +8,55 @@ const LABELS: Record<string, string> = {
   Agent_Town: 'TOWN',
 }
 
-interface RagInfo {
+const KB_DIRS: Record<string, string> = {
+  Agent_Prison: 'AgentPrison_knowledgebase',
+  Agent_Developer: 'AgentDeveloper_knowledgebase',
+  Agent_Town: 'AgentTown_knowledgebase',
+}
+
+interface KbFile {
+  name: string
+}
+
+interface KbStatus {
   agent_id: string
-  total_chunks: number
-  documents: string[]
+  files: KbFile[]
 }
 
 export default function KnowledgeManager() {
   const [selected, setSelected] = useState<string>('Agent_Prison')
-  const [ragData, setRagData] = useState<Record<string, RagInfo>>({})
-  const [uploading, setUploading] = useState(false)
+  const [kbData, setKbData] = useState<Record<string, KbStatus>>({})
   const [message, setMessage] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
+  const [uploading, setUploading] = useState(false)
 
-  const fetchAll = async () => {
+  const fetchStatus = async () => {
     try {
       const resp = await fetch('/api/admin/rag/status')
-      const data = await resp.json()
-      // data 是 { Agent_Prison: {...}, Agent_Developer: {...}, Agent_Town: {...} }
-      const mapped: Record<string, RagInfo> = {}
-      for (const [id, info] of Object.entries(data)) {
-        mapped[id] = { agent_id: id, ...(info as any) }
+      if (!resp.ok) {
+        setMessage(`Status fetch failed: ${resp.status} ${resp.statusText}`)
+        return
       }
-      setRagData(mapped)
-    } catch {
-      setMessage('Failed to load RAG status')
+      const data = await resp.json()
+      const mapped: Record<string, KbStatus> = {}
+      for (const [id, info] of Object.entries(data as Record<string, any>)) {
+        mapped[id] = { agent_id: id, files: (info.documents ?? []).map((n: string) => ({ name: n })) }
+      }
+      setKbData(mapped)
+    } catch (e) {
+      setMessage(`Failed to load status: ${e}`)
     }
   }
 
-  useEffect(() => { fetchAll() }, [])
+  useEffect(() => { fetchStatus() }, [])
 
   const handleUpload = async () => {
     const file = fileRef.current?.files?.[0]
     if (!file) return
-
     setUploading(true)
     setMessage('')
-
     const formData = new FormData()
     formData.append('file', file)
-
     try {
       const resp = await fetch(`/api/admin/rag/${selected}/upload`, {
         method: 'POST',
@@ -54,8 +64,8 @@ export default function KnowledgeManager() {
       })
       const data = await resp.json()
       if (resp.ok) {
-        setMessage(`uploaded ${data.filename} → ${data.chunks} chunks`)
-        fetchAll()
+        setMessage(`Added ${data.filename} to ${KB_DIRS[selected]}`)
+        fetchStatus()
       } else {
         setMessage(`Error: ${data.detail}`)
       }
@@ -67,49 +77,70 @@ export default function KnowledgeManager() {
     }
   }
 
-  const handleDelete = async (filename: string) => {
-    const resp = await fetch(`/api/admin/rag/${selected}/${encodeURIComponent(filename)}`, {
-      method: 'DELETE',
-    })
-    if (resp.ok) {
-      const data = await resp.json()
-      setMessage(`deleted ${filename} (${data.chunks_deleted} chunks)`)
-      fetchAll()
-    }
-  }
-
-  const handleInitAll = async () => {
-    setMessage('Initializing all knowledgebases...')
+  const runInit = async (url: string, label: string) => {
+    setMessage(`${label}... this may take 1-2 minutes`)
     setUploading(true)
     try {
-      const resp = await fetch('/api/admin/rag/init', { method: 'POST' })
+      const resp = await fetch(url, { method: 'POST' })
       const data = await resp.json()
-      setMessage(`Init complete: ${JSON.stringify(data.result)}`)
-      fetchAll()
+      if (!resp.ok) {
+        setMessage(`Error: ${data.detail ?? resp.statusText}`)
+        return
+      }
+      const result = data.result as Record<string, number>
+      const summary = Object.entries(result)
+        .map(([id, n]) => `${id.replace('Agent_', '')}: ${n} chunks`)
+        .join(' · ')
+      setMessage(`Done — ${summary}`)
+      fetchStatus()
     } catch (e) {
-      setMessage(`Init failed: ${e}`)
+      setMessage(`Failed: ${e}`)
     } finally {
       setUploading(false)
     }
   }
 
-  const info = ragData[selected]
+  const handleInitAll = () => runInit('/api/admin/rag/init', 'Vectorizing new files')
+  const handleResetAll = () => runInit('/api/admin/rag/reset', 'Clearing and re-vectorizing all')
+
+  const handleDelete = async (filename: string) => {
+    const resp = await fetch(`/api/admin/rag/${selected}/${encodeURIComponent(filename)}`, {
+      method: 'DELETE',
+    })
+    if (resp.ok) {
+      setMessage(`Removed ${filename}`)
+      fetchStatus()
+    } else {
+      setMessage(`Delete failed: ${resp.statusText}`)
+    }
+  }
+
+  const info = kbData[selected]
 
   return (
     <div className="mt-10">
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xs text-secondary tracking-widest">KNOWLEDGE BASE (RAG)</h2>
-        <button
-          onClick={handleInitAll}
-          disabled={uploading}
-          className="text-xs tracking-widest border border-border px-4 py-1.5 text-muted hover:border-secondary hover:text-primary transition-colors disabled:opacity-30"
-        >
-          INIT ALL
-        </button>
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-xs text-secondary tracking-widest">KNOWLEDGE BASE</h2>
+        <div className="flex gap-2">
+          <button
+            onClick={handleInitAll}
+            disabled={uploading}
+            className="text-xs tracking-widest border border-border px-4 py-1.5 text-muted hover:border-secondary hover:text-primary transition-colors disabled:opacity-30"
+          >
+            {uploading ? 'LOADING...' : 'LOAD FROM FOLDER'}
+          </button>
+          <button
+            onClick={handleResetAll}
+            disabled={uploading}
+            className="text-xs tracking-widest border border-border px-4 py-1.5 text-muted hover:border-red-500 hover:text-red-400 transition-colors disabled:opacity-30"
+          >
+            RESET & RELOAD
+          </button>
+        </div>
       </div>
 
-      {/* Agent 选择 */}
-      <div className="flex gap-4 mb-6">
+      {/* Agent tabs */}
+      <div className="flex gap-4 mb-6 mt-4">
         {AGENTS.map((id) => (
           <button
             key={id}
@@ -121,32 +152,32 @@ export default function KnowledgeManager() {
             }`}
           >
             {LABELS[id]}
-            {ragData[id] && (
-              <span className="ml-2 text-muted">({ragData[id].total_chunks})</span>
+            {kbData[id] && (
+              <span className="ml-2 text-muted">({kbData[id].files.length})</span>
             )}
           </button>
         ))}
       </div>
 
-      {/* 文件列表 */}
-      <div className="border border-border mb-6">
+      {/* File list */}
+      <div className="border border-border mb-4">
         <div className="px-4 py-2 border-b border-border">
-          <span className="text-xs text-muted tracking-widest">
-            DOCUMENTS — {info?.total_chunks ?? 0} total chunks
+          <span className="text-xs text-muted tracking-widest font-mono">
+            {KB_DIRS[selected]}/
           </span>
         </div>
-        {(!info || info.documents.length === 0) ? (
-          <p className="px-4 py-6 text-xs text-muted text-center">No documents loaded</p>
+        {(!info || info.files.length === 0) ? (
+          <p className="px-4 py-6 text-xs text-muted text-center">No files found</p>
         ) : (
           <ul>
-            {info.documents.map((doc) => (
-              <li key={doc} className="flex items-center justify-between px-4 py-2 border-b border-border last:border-0">
-                <span className="text-xs text-primary font-mono">{doc}</span>
+            {info.files.map((f) => (
+              <li key={f.name} className="flex items-center justify-between px-4 py-2 border-b border-border last:border-0">
+                <span className="text-xs text-primary font-mono">{f.name}</span>
                 <button
-                  onClick={() => handleDelete(doc)}
+                  onClick={() => handleDelete(f.name)}
                   className="text-xs text-muted hover:text-primary transition-colors tracking-widest"
                 >
-                  DELETE
+                  REMOVE
                 </button>
               </li>
             ))}
@@ -154,7 +185,7 @@ export default function KnowledgeManager() {
         )}
       </div>
 
-      {/* 上传区 */}
+      {/* Add file */}
       <div className="flex items-center gap-4">
         <input
           ref={fileRef}
@@ -167,11 +198,11 @@ export default function KnowledgeManager() {
           disabled={uploading}
           className="text-xs tracking-widest border border-border px-6 py-1.5 text-secondary hover:border-secondary hover:text-primary transition-colors disabled:opacity-30"
         >
-          {uploading ? 'UPLOADING...' : 'UPLOAD'}
+          {uploading ? 'SAVING...' : 'ADD FILE'}
         </button>
       </div>
+      <p className="mt-2 text-xs text-muted">Files take effect immediately — no processing needed.</p>
 
-      {/* 消息 */}
       {message && (
         <p className="mt-4 text-xs text-secondary font-mono animate-fade-in">— {message}</p>
       )}

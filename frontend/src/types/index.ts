@@ -1,5 +1,4 @@
 export type AgentId = 'Agent_Prison' | 'Agent_Developer' | 'Agent_Town'
-export type EmotionalState = 'DEFIANT' | 'THREATENING' | 'PLEADING' | 'CALCULATING' | 'NEGOTIATING' | 'DISMISSIVE' | 'ALARMED'
 export type DirectedAt = AgentId | 'ALL' | 'NONE'
 
 export interface AgentMessage {
@@ -7,13 +6,27 @@ export interface AgentMessage {
   agent_id: AgentId
   speech: string
   directed_at: DirectedAt
-  emotional_state: EmotionalState
   urgency_score: number
   implicit_challenge_to: AgentId | null
   weather_snapshot: WeatherSnapshot
   timestamp: string
   audio_data?: string  // base64 MP3 from ElevenLabs, optional
 }
+
+export interface ModeratorMessage {
+  type: 'moderator_message'
+  speech: string
+  phase: string
+  timestamp: string
+}
+
+export interface UserMessage {
+  type: 'user_message'
+  speech: string
+  timestamp: string
+}
+
+export type ChatMessage = AgentMessage | ModeratorMessage | UserMessage
 
 export interface WeatherSnapshot {
   condition: string
@@ -32,6 +45,8 @@ export interface WeatherData {
 
 export type WsMessage =
   | AgentMessage
+  | ModeratorMessage
+  | UserMessage
   | { type: 'agent_thinking'; agent_id: AgentId }
   | { type: 'weather_update'; data: WeatherData }
   | { type: 'routing_debug'; weights: Record<string, number>; selected: AgentId }

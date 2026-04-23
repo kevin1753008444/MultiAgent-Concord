@@ -63,6 +63,13 @@ class VectorStore:
             })
         return items
 
+    def get_all_texts(self, agent_id: str) -> list[str]:
+        col = self._collections[agent_id]
+        if col.count() == 0:
+            return []
+        result = col.get(include=["documents"])
+        return result["documents"] or []
+
     def get_doc_count(self, agent_id: str) -> int:
         return self._collections[agent_id].count()
 

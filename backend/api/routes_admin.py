@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 from backend.config import RAG_KNOWLEDGEBASE_DIR, AGENT_KB_DIRS, AGENT_IDS
+from backend.models.schemas import NegotiationPhase
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -17,6 +18,28 @@ def set_orchestrator(orch) -> None:
 class UpdatePromptRequest(BaseModel):
     agent_id: str
     system_prompt: str
+
+class SetPhaseRequest(BaseModel):
+    phase: NegotiationPhase
+
+
+# ─── Negotiation Phase ───────────────────────────────
+
+@router.get("/phase")
+async def get_phase():
+    if not _orchestrator:
+        raise HTTPException(503, "Orchestrator not ready")
+    return {
+        "phase": _orchestrator.phase,
+        "turn": len(_orchestrator.history),
+    }
+
+@router.post("/phase")
+async def set_phase(req: SetPhaseRequest):
+    if not _orchestrator:
+        raise HTTPException(503, "Orchestrator not ready")
+    _orchestrator.set_phase(req.phase)
+    return {"ok": True, "phase": _orchestrator.phase}
 
 
 # ─── System Prompt 管理 ──────────────────────────────
@@ -43,29 +66,90 @@ async def update_agent_prompt(agent_id: str, req: UpdatePromptRequest):
 
 # ─── RAG 知识库管理 ──────────────────────────────────
 
+def _list_kb_files(agent_id: str) -> list[str]:
+    """List .md/.txt/.pdf filenames in an agent's KB folder."""
+    kb_dir = Path(RAG_KNOWLEDGEBASE_DIR) / AGENT_KB_DIRS.get(agent_id, "")
+    if not kb_dir.exists():
+        return []
+    return sorted(
+        f.name for f in kb_dir.iterdir()
+        if f.suffix.lower() in (".md", ".txt", ".pdf")
+    )
+
+
+# NOTE: /rag/status and /rag/init must be defined BEFORE /rag/{agent_id}
+# otherwise FastAPI matches "status"/"init" as the agent_id path parameter.
+
+@router.get("/rag/status")
+async def rag_status():
+    """Chunk counts and document lists for all agents (from ChromaDB)."""
+    if not _orchestrator:
+        raise HTTPException(503, "Orchestrator not ready")
+    status = {}
+    for agent_id in AGENT_IDS:
+        sources = _orchestrator.vector_store.list_sources(agent_id)
+        total = _orchestrator.vector_store.get_doc_count(agent_id)
+        status[agent_id] = {"total_chunks": total, "documents": sources}
+    return status
+
+
+@router.post("/rag/init")
+async def init_rag(force: bool = False):
+    """Vectorize all KB files. Pass ?force=true to clear and re-ingest everything."""
+    if not _orchestrator:
+        raise HTTPException(503, "Orchestrator not ready")
+    result = await _orchestrator.retriever.init_all_knowledgebases(force=force)
+    return {"ok": True, "result": result}
+
+
+@router.post("/rag/reset")
+async def reset_rag():
+    """Clear all ChromaDB collections and re-ingest from the KB folder."""
+    if not _orchestrator:
+        raise HTTPException(503, "Orchestrator not ready")
+    result = await _orchestrator.retriever.init_all_knowledgebases(force=True)
+    return {"ok": True, "result": result}
+
+
+@router.get("/debug/prompt/{agent_id}")
+async def debug_prompt(agent_id: str):
+    """Return the assembled system instruction for an agent (no RAG, no history) for inspection."""
+    from backend.core.prompt_assembler import assemble
+    from backend.models.schemas import WeatherData
+    from datetime import datetime, timezone
+    if not _orchestrator:
+        raise HTTPException(503, "Orchestrator not ready")
+    if agent_id not in _orchestrator.agents:
+        raise HTTPException(404, f"Agent {agent_id} not found")
+    agent = _orchestrator.agents[agent_id]
+    stub_weather = WeatherData(
+        condition="Clear", description="debug", temp_f=55.0, temp_c=12.8,
+        humidity=50, wind_speed=0.0, local_time=datetime.now(timezone.utc),
+        time_str="12:00", is_late_night=False, is_heavy_rain=False, pressure_hpa=1013,
+    )
+    rag_chunks = await _orchestrator._retrieve_for_agent(agent_id)
+    system_instruction, _ = assemble(agent_id, agent.get_system_prompt(), stub_weather, [], rag_chunks)
+    return {
+        "agent_id": agent_id,
+        "rag_chunk_count": len(rag_chunks),
+        "system_instruction": system_instruction,
+    }
+
+
 @router.get("/rag/{agent_id}")
 async def list_rag_documents(agent_id: str):
-    """列出某 Agent 知识库中的所有文件及 chunk 数"""
     if not _orchestrator:
         raise HTTPException(503, "Orchestrator not ready")
     if agent_id not in AGENT_IDS:
         raise HTTPException(404, f"Agent {agent_id} not found")
-
     sources = _orchestrator.vector_store.list_sources(agent_id)
     total = _orchestrator.vector_store.get_doc_count(agent_id)
-    return {
-        "agent_id": agent_id,
-        "total_chunks": total,
-        "documents": sources,
-    }
+    return {"agent_id": agent_id, "total_chunks": total, "documents": sources}
 
 
 @router.post("/rag/{agent_id}/upload")
-async def upload_rag_document(
-    agent_id: str,
-    file: UploadFile = File(...),
-):
-    """上传文件到某 Agent 的知识库并向量化"""
+async def upload_rag_document(agent_id: str, file: UploadFile = File(...)):
+    """Save a file to the KB folder and vectorize it."""
     if not _orchestrator:
         raise HTTPException(503, "Orchestrator not ready")
     if agent_id not in AGENT_IDS:
@@ -75,64 +159,31 @@ async def upload_rag_document(
     if suffix not in (".md", ".txt", ".pdf"):
         raise HTTPException(400, f"Unsupported format: {suffix}. Use .md, .txt, or .pdf")
 
-    # 保存文件到知识库目录
     kb_dir = Path(RAG_KNOWLEDGEBASE_DIR) / AGENT_KB_DIRS[agent_id]
     kb_dir.mkdir(parents=True, exist_ok=True)
     dest = kb_dir / file.filename
     with open(dest, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
-    # 向量化
     try:
         chunk_count = await _orchestrator.retriever.ingest_file(str(dest), agent_id)
     except Exception as e:
         dest.unlink(missing_ok=True)
         raise HTTPException(500, f"Vectorization failed: {e}")
 
-    return {
-        "ok": True,
-        "agent_id": agent_id,
-        "filename": file.filename,
-        "chunks": chunk_count,
-    }
+    return {"ok": True, "agent_id": agent_id, "filename": file.filename, "chunks": chunk_count}
 
 
 @router.delete("/rag/{agent_id}/{filename}")
 async def delete_rag_document(agent_id: str, filename: str):
-    """删除某 Agent 知识库中的指定文件及其向量"""
+    """Remove a file from the KB folder and delete its vectors."""
     if not _orchestrator:
         raise HTTPException(503, "Orchestrator not ready")
     if agent_id not in AGENT_IDS:
         raise HTTPException(404, f"Agent {agent_id} not found")
 
-    # 从向量库删除
     deleted = _orchestrator.vector_store.delete_by_source(agent_id, filename)
-
-    # 从磁盘删除
     kb_dir = Path(RAG_KNOWLEDGEBASE_DIR) / AGENT_KB_DIRS[agent_id]
-    file_path = kb_dir / filename
-    file_path.unlink(missing_ok=True)
+    (kb_dir / filename).unlink(missing_ok=True)
 
     return {"ok": True, "agent_id": agent_id, "filename": filename, "chunks_deleted": deleted}
-
-
-@router.post("/rag/init")
-async def init_rag():
-    """批量向量化所有现有知识库文件"""
-    if not _orchestrator:
-        raise HTTPException(503, "Orchestrator not ready")
-    result = await _orchestrator.retriever.init_all_knowledgebases()
-    return {"ok": True, "result": result}
-
-
-@router.get("/rag/status")
-async def rag_status():
-    """查看所有 Agent 的 RAG 状态"""
-    if not _orchestrator:
-        raise HTTPException(503, "Orchestrator not ready")
-    status = {}
-    for agent_id in AGENT_IDS:
-        sources = _orchestrator.vector_store.list_sources(agent_id)
-        total = _orchestrator.vector_store.get_doc_count(agent_id)
-        status[agent_id] = {"total_chunks": total, "documents": sources}
-    return status

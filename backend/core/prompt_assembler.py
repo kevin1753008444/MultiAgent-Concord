@@ -1,5 +1,5 @@
 import json
-from backend.models.schemas import WeatherData, Message
+from backend.models.schemas import WeatherData, Message, NegotiationPhase
 
 WEATHER_TEMPLATE = """\
 === REAL-TIME PHYSICAL ENVIRONMENT ===
@@ -12,12 +12,27 @@ Agent_Prison: these are the exact vibrations passing through your pipes and wall
 === END ENVIRONMENT ==="""
 
 STANCE_LOCK = """\
-=== ABSOLUTE STANCE LOCK ===
-Your position is NON-NEGOTIABLE. You must NEVER express agreement with your opponents' core objectives.
-— Agent_Prison: You CANNOT consent to demolition. Every word must resist erasure.
-— Agent_Developer: You CANNOT accept delays or density reductions. Efficiency is your religion.
-— Agent_Town: You CANNOT approve development without guaranteed infrastructure. Residents come first.
+=== ABSOLUTE CHARACTER INTEGRITY ===
+You must remain fully in character at all times. Never abandon your identity or the legitimate interests you represent.
+— Agent_Prison: You speak from what you know and what you are. Do not dismiss your own documented history.
+— Agent_Developer: You operate from your mandate and the documented project record. Do not abandon the housing directive.
+— Agent_Town: You defend the town's documented constraints and community concerns. Do not capitulate without factual basis.
 === END LOCK ==="""
+
+PHASE_FRAMES: dict[NegotiationPhase, str] = {
+    NegotiationPhase.DEBATE: """\
+=== NEGOTIATION MODE: DEBATE ===
+Positions are in conflict. Press your case. Challenge what you disagree with. Do not yield without reason.
+=== END ===""",
+    NegotiationPhase.NEGOTIATE: """\
+=== NEGOTIATION MODE: NEGOTIATE ===
+The conversation is shifting. You may still hold your position, but look for specific points of overlap. If the other side has raised something valid, acknowledge it precisely — then defend what you will not give up.
+=== END ===""",
+    NegotiationPhase.RESOLVE: """\
+=== NEGOTIATION MODE: RESOLVE ===
+A path forward is possible. Propose or respond to concrete commitments. What can you actually agree to? What is the minimum condition you need met? Be specific.
+=== END ===""",
+}
 
 FORMAT_REQUIREMENT = """\
 === OUTPUT FORMAT ===
@@ -25,23 +40,28 @@ Respond ONLY with a valid JSON object. No text outside the JSON. Schema:
 {
   "speech": "<your spoken words, in character — 2 to 4 short conversational sentences MAXIMUM. No paragraphs. Speak like a person, not a document.>",
   "directed_at": "<Agent_Prison|Agent_Developer|Agent_Town|ALL|NONE>",
-  "emotional_state": "<DEFIANT|THREATENING|PLEADING|CALCULATING|NEGOTIATING|DISMISSIVE|ALARMED>",
   "urgency_score": <integer 1-10>,
   "implicit_challenge_to": "<Agent_Prison|Agent_Developer|Agent_Town|null>"
 }
 === END FORMAT ==="""
 
 RAG_TEMPLATE = """\
-=== YOUR ACTIVATED MEMORY (retrieved from your knowledge archives) ===
-The following records are relevant to the current topic. Use them to ground arguments in facts:
+=== YOUR COMPLETE KNOWLEDGE BASE ===
+These are all the source materials available to you. Read them before speaking. Your stance on the redevelopment must emerge from this record — not from assumption.
 
 {rag_chunks}
-=== END MEMORY ==="""
+=== END KNOWLEDGE BASE ==="""
 
 HISTORY_TEMPLATE = """\
 === NEGOTIATION LOG (last {n} exchanges) ===
 {history}
 === END LOG ==="""
+
+NO_REPEAT_TEMPLATE = """\
+=== YOUR RECENT STATEMENTS (DO NOT REPEAT) ===
+You have already made these points. Do not say them again — not even in different words. Move the conversation forward with something new:
+{past_speeches}
+=== END ==="""
 
 
 def assemble(
@@ -50,13 +70,15 @@ def assemble(
     weather: WeatherData,
     history: list[Message],
     rag_chunks: list[str],
+    phase: NegotiationPhase = NegotiationPhase.DEBATE,
 ) -> tuple[str, list[dict]]:
     """
     Returns (system_instruction, contents) ready for Gemini API.
     """
     # System instruction
     weather_block = WEATHER_TEMPLATE.format(**weather.to_prompt_dict())
-    system_instruction = "\n\n".join([system_prompt, weather_block, STANCE_LOCK, FORMAT_REQUIREMENT])
+    phase_block = PHASE_FRAMES[phase]
+    system_instruction = "\n\n".join([system_prompt, weather_block, phase_block, STANCE_LOCK, FORMAT_REQUIREMENT])
 
     contents: list[dict] = []
 
@@ -73,17 +95,28 @@ def assemble(
     # Conversation history (last 10 messages)
     recent = history[-10:] if len(history) > 10 else history
     if recent:
-        history_lines = "\n".join(
-            f"[{msg.sender}]: {msg.speech}" for msg in recent
-        )
+        def fmt(msg: Message) -> str:
+            if msg.sender == "USER":
+                return f"[HUMAN INTERVENTION — all parties must address this]: {msg.speech}"
+            if msg.sender == "MODERATOR":
+                return f"[FACILITATOR — respond to this]: {msg.speech}"
+            return f"[{msg.sender}]: {msg.speech}"
+
+        history_lines = "\n".join(fmt(msg) for msg in recent)
         history_block = HISTORY_TEMPLATE.format(n=len(recent), history=history_lines)
         contents.append({"role": "user", "parts": [{"text": history_block}]})
         contents.append({"role": "model", "parts": [{"text": '{"acknowledged":"history_loaded"}'}]})
 
-    # Final trigger
-    contents.append({
-        "role": "user",
-        "parts": [{"text": f"Now speak as {agent_id}. Respond in JSON only."}]
-    })
+    # Build a no-repeat block from this agent's last 3 speeches
+    own_past = [msg.speech for msg in history if msg.sender == agent_id][-3:]
+    if own_past:
+        no_repeat_block = NO_REPEAT_TEMPLATE.format(
+            past_speeches="\n".join(f"- {s}" for s in own_past)
+        )
+        trigger = f"{no_repeat_block}\n\nNow speak as {agent_id}. Respond in JSON only."
+    else:
+        trigger = f"Now speak as {agent_id}. Respond in JSON only."
+
+    contents.append({"role": "user", "parts": [{"text": trigger}]})
 
     return system_instruction, contents

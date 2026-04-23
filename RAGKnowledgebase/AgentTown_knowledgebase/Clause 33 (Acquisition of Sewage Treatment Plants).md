@@ -38,4 +38,3 @@ Taking ownership of the facility offers a "rare opportunity" to resolve wastewat
 ### Article Motion
 
 Mr. Howell moves that the Town transfer from the **Certified Free Cash Balance of July 1, 2024**, the sum of **$250,000** for the feasibility evaluation of the WWTP acquisition and general planning for MCI Concord.
-

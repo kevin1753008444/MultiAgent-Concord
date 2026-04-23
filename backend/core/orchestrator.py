@@ -14,12 +14,18 @@ from backend.services.elevenlabs_service import ElevenLabsService, log_available
 from backend.core.stance_guard import StanceGuard
 from backend.rag.vector_store import VectorStore
 from backend.rag.retriever import Retriever
-from backend.models.schemas import AgentResponse, Message, WeatherData
+from backend.models.schemas import AgentResponse, Message, WeatherData, NegotiationPhase
 from backend.config import SILENCE_FALLBACK, AUTO_MODE_INTERVAL, DEBUG
 
 logger = logging.getLogger(__name__)
 
 BroadcastFn = Callable[[dict], Awaitable[None]]
+
+_SEED_QUERIES: dict[str, str] = {
+    "Agent_Prison": "MCI Concord history buildings infrastructure community programs",
+    "Agent_Developer": "DCAMM MCI Concord redevelopment housing Section 107 revenue",
+    "Agent_Town": "Concord wastewater treatment plant zoning advisory committee constraints",
+}
 
 
 class Orchestrator:
@@ -47,16 +53,27 @@ class Orchestrator:
         self._auto_task: asyncio.Task | None = None
         self._last_speaker: str = "Agent_Developer"
         self._rag_initialized: bool = False
+        self._agent_knowledge: dict[str, list[str]] = {}
+        self.phase: NegotiationPhase = NegotiationPhase.DEBATE
 
     # ─── Public API ───────────────────────────────────────────────
 
     async def ensure_rag_initialized(self) -> dict[str, int]:
-        """RAG disabled — skipping embedding init."""
         if self._rag_initialized:
             return {}
-        self._rag_initialized = True
         await log_available_voices()
-        return {}
+        try:
+            result = await self.retriever.init_all_knowledgebases()
+            self._rag_initialized = True
+            logger.info(f"RAG init complete: {result}")
+            for agent_id in self.agents:
+                chunks = self.retriever.retrieve_all(agent_id)
+                self._agent_knowledge[agent_id] = chunks
+                logger.info(f"Full knowledge loaded for {agent_id}: {len(chunks)} chunks")
+            return result
+        except Exception as e:
+            logger.error(f"RAG init failed: {e}")
+            return {}
 
     async def trigger_one_turn(self, force_speaker: str | None = None) -> None:
         """触发一轮对话"""
@@ -89,7 +106,6 @@ class Orchestrator:
                 fake_response = AgentResponse(
                     speech=last_msg.speech,
                     directed_at=last_msg.directed_at,  # type: ignore
-                    emotional_state=last_msg.emotional_state or "CALCULATING",  # type: ignore
                     urgency_score=last_msg.urgency_score or 5,
                     implicit_challenge_to=None,
                 )
@@ -111,9 +127,6 @@ class Orchestrator:
         # Broadcast typing indicator immediately — before any slow I/O
         await self.broadcast({"type": "agent_thinking", "agent_id": next_speaker})
 
-        # One-time init (voice list log etc.) — runs after typing indicator is visible
-        await self.ensure_rag_initialized()
-
         # RAG 检索：用最近 3 条对话作为 query
         rag_chunks = await self._retrieve_for_agent(next_speaker)
 
@@ -121,6 +134,7 @@ class Orchestrator:
             history=self.history,
             weather=weather,
             rag_chunks=rag_chunks,
+            phase=self.phase,
         )
 
         if response is None:
@@ -158,9 +172,9 @@ class Orchestrator:
             "agent_id": next_speaker,
             "speech": response.speech,
             "directed_at": response.directed_at,
-            "emotional_state": response.emotional_state,
             "urgency_score": response.urgency_score,
             "implicit_challenge_to": response.implicit_challenge_to,
+            "phase": self.phase,
             "weather_snapshot": {
                 "condition": weather.condition,
                 "temp_f": weather.temp_f,
@@ -190,12 +204,98 @@ class Orchestrator:
         self.history.clear()
         self.speaker_history.clear()
         self._last_speaker = "Agent_Developer"
+        self.phase = NegotiationPhase.DEBATE
+
+    def set_phase(self, phase: NegotiationPhase) -> None:
+        """Manually override the negotiation phase (e.g. from admin panel)."""
+        old = self.phase
+        self.phase = phase
+        logger.info(f"Phase manually set: {old} → {phase}")
+
+    async def inject_user_message(self, text: str) -> None:
+        """Inject a human message into the conversation that all agents will hear."""
+        self.history.append(Message(
+            session_id=self.session_id,
+            sender="USER",
+            speech=text,
+            directed_at="ALL",
+            urgency_score=5,
+        ))
+        await self.broadcast({
+            "type": "user_message",
+            "speech": text,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+
+    MODERATOR_SYSTEM = (
+        "You are a silent facilitator for a negotiation about the MCI Concord prison redevelopment. "
+        "You have no stake in the outcome. Your only job is to move the room. "
+        "Write exactly 1–2 plain sentences. Do not summarize — name the specific tension "
+        "or opening that has emerged, then ask the one question that could move things forward. "
+        "No jargon. No pleasantries. Be direct."
+    )
+
+    MODERATOR_PHASE_PROMPTS = {
+        NegotiationPhase.DEBATE: (
+            "The parties have stated their positions. "
+            "Intervene to surface what is actually at stake and open space for the next step."
+        ),
+        NegotiationPhase.NEGOTIATE: (
+            "Some tension has softened. "
+            "Intervene to push the parties toward a specific, concrete arrangement."
+        ),
+    }
+
+    async def _inject_moderator(self) -> None:
+        """Generate a moderator intervention, inject it into history, and advance the phase."""
+        # Only intervene during DEBATE and NEGOTIATE — RESOLVE runs on its own
+        if self.phase == NegotiationPhase.RESOLVE:
+            return
+
+        # Build the prompt from recent history
+        recent_lines = "\n".join(
+            f"[{m.sender}]: {m.speech}" for m in self.history[-8:]
+        )
+        phase_prompt = self.MODERATOR_PHASE_PROMPTS[self.phase]
+        prompt = f"Recent conversation:\n{recent_lines}\n\n{phase_prompt}"
+
+        mod_text = await self.gemini.generate_text(
+            system_instruction=self.MODERATOR_SYSTEM,
+            prompt=prompt,
+            temperature=0.7,
+        )
+        if not mod_text:
+            return
+
+        # Advance phase before broadcasting so agents see the new phase framing
+        old_phase = self.phase
+        if self.phase == NegotiationPhase.DEBATE:
+            self.phase = NegotiationPhase.NEGOTIATE
+        elif self.phase == NegotiationPhase.NEGOTIATE:
+            self.phase = NegotiationPhase.RESOLVE
+        logger.info(f"Moderator fired: phase {old_phase} → {self.phase}")
+
+        # Inject into history so all agents see it in their next prompt
+        self.history.append(Message(
+            session_id=self.session_id,
+            sender="MODERATOR",
+            speech=mod_text,
+            directed_at="ALL",
+            urgency_score=5,
+        ))
+
+        await self.broadcast({
+            "type": "moderator_message",
+            "speech": mod_text,
+            "phase": self.phase,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
 
     # ─── Internal ─────────────────────────────────────────────────
 
     async def _retrieve_for_agent(self, agent_id: str) -> list[str]:
-        """RAG disabled — returns empty until re-enabled."""
-        return []
+        """Return full pre-loaded knowledge for the agent."""
+        return self._agent_knowledge.get(agent_id, [])
 
     async def _auto_loop(self, interval: int) -> None:
         try:
@@ -211,7 +311,6 @@ class Orchestrator:
             "agent_id": agent_id,
             "speech": SILENCE_FALLBACK,
             "directed_at": "NONE",
-            "emotional_state": "DISMISSIVE",
             "urgency_score": 1,
             "implicit_challenge_to": None,
             "weather_snapshot": {

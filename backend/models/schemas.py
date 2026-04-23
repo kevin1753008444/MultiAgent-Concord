@@ -1,20 +1,23 @@
 from pydantic import BaseModel
 from typing import Optional, Literal
 from datetime import datetime
+from enum import Enum
+
+
+class NegotiationPhase(str, Enum):
+    DEBATE = "debate"        # Agents press their positions
+    NEGOTIATE = "negotiate"  # Common ground starts emerging
+    RESOLVE = "resolve"      # Agents work toward concrete commitments
 
 AgentId = Literal["Agent_Prison", "Agent_Developer", "Agent_Town"]
-EmotionalState = Literal[
-    "DEFIANT", "THREATENING", "PLEADING",
-    "CALCULATING", "NEGOTIATING", "DISMISSIVE", "ALARMED"
-]
 DirectedAt = Literal["Agent_Prison", "Agent_Developer", "Agent_Town", "ALL", "NONE"]
 
 
 class AgentResponse(BaseModel):
     speech: str
     directed_at: DirectedAt
-    emotional_state: EmotionalState
     urgency_score: int  # 1-10
+    emotional_state: Optional[str] = None
     implicit_challenge_to: Optional[str] = None
 
     def get_challenge_target(self) -> Optional[str]:

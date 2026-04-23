@@ -21,6 +21,7 @@ async def lifespan(app: FastAPI):
     orchestrator = Orchestrator(broadcast_fn=manager.broadcast)
     routes_chat.set_orchestrator(orchestrator)
     routes_admin.set_orchestrator(orchestrator)
+    await orchestrator.ensure_rag_initialized()
     yield
     if orchestrator:
         await orchestrator.stop_auto_mode()
@@ -62,6 +63,14 @@ async def websocket_endpoint(ws: WebSocket):
             elif msg_type == "trigger":
                 force = data.get("force_speaker")
                 await orchestrator.trigger_one_turn(force_speaker=force)
+
+            elif msg_type == "user_inject":
+                text = data.get("text", "").strip()
+                if text:
+                    await orchestrator.inject_user_message(text)
+
+            elif msg_type == "moderator":
+                await orchestrator._inject_moderator()
 
             elif msg_type == "reset":
                 orchestrator.reset()

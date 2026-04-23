@@ -27,7 +27,7 @@ function drainQueue() {
 
 export function useWebSocket() {
   const wsRef = useRef<WebSocket | null>(null)
-  const { addMessage, setThinking, setWeather, setWsConnected, reset } = useConversationStore()
+  const { addMessage, addModeratorMessage, addUserMessage, setThinking, setWeather, setWsConnected, reset } = useConversationStore()
 
   const handleMessage = useCallback((event: MessageEvent) => {
     try {
@@ -36,6 +36,12 @@ export function useWebSocket() {
         case 'agent_message':
           addMessage(data)
           if (data.audio_data) enqueueAudio(data.audio_data)
+          break
+        case 'moderator_message':
+          addModeratorMessage(data)
+          break
+        case 'user_message':
+          addUserMessage(data)
           break
         case 'agent_thinking':
           setThinking(data.agent_id)
@@ -50,7 +56,7 @@ export function useWebSocket() {
     } catch (e) {
       console.error('WS parse error', e)
     }
-  }, [addMessage, setThinking, setWeather, reset])
+  }, [addMessage, addModeratorMessage, addUserMessage, setThinking, setWeather, reset])
 
   useEffect(() => {
     const ws = new WebSocket(WS_URL)

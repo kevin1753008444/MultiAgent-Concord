@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useConversationStore } from '../store/conversationStore'
 import { useWebSocket } from '../hooks/useWebSocket'
 import WeatherBar from '../components/WeatherBar'
@@ -9,11 +9,17 @@ export default function ChatPage() {
   const { messages, isAutoMode, setAutoMode, reset } = useConversationStore()
   const { send } = useWebSocket()
   const bottomRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [injecting, setInjecting] = useState(false)
+  const [injectText, setInjectText] = useState('')
 
-  // 自动滚动到底部
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  useEffect(() => {
+    if (injecting) inputRef.current?.focus()
+  }, [injecting])
 
   function handleStartAuto() {
     send({ type: 'start_auto_mode', interval_seconds: 20 })
@@ -29,6 +35,18 @@ export default function ChatPage() {
     send({ type: 'trigger' })
   }
 
+  function handleFacilitate() {
+    send({ type: 'moderator' })
+  }
+
+  function handleInjectSubmit() {
+    const text = injectText.trim()
+    if (!text) return
+    send({ type: 'user_inject', text })
+    setInjectText('')
+    setInjecting(false)
+  }
+
   function handleReset() {
     send({ type: 'reset' })
     reset()
@@ -38,7 +56,6 @@ export default function ChatPage() {
     <div className="min-h-screen bg-void flex flex-col">
       <WeatherBar />
 
-      {/* 主内容区：天气栏 32px + 指示器 ~48px = 80px 顶部偏移 */}
       <div className="flex flex-col flex-1 pt-10">
         <AgentIndicator />
 
@@ -55,6 +72,36 @@ export default function ChatPage() {
           ))}
           <div ref={bottomRef} />
         </div>
+
+        {/* Inject input — slides in above control bar */}
+        {injecting && (
+          <div className="border-t border-amber-500/30 px-8 py-3 flex items-center gap-3 bg-void">
+            <span className="text-xs font-mono text-amber-500/60 tracking-widest shrink-0">YOU →</span>
+            <input
+              ref={inputRef}
+              value={injectText}
+              onChange={e => setInjectText(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') handleInjectSubmit()
+                if (e.key === 'Escape') { setInjecting(false); setInjectText('') }
+              }}
+              placeholder="say something all three agents will hear..."
+              className="flex-1 bg-transparent text-sm font-mono text-primary placeholder:text-muted outline-none"
+            />
+            <button
+              onClick={handleInjectSubmit}
+              className="text-xs font-mono tracking-widest text-amber-500/70 hover:text-amber-400 transition-colors"
+            >
+              SEND
+            </button>
+            <button
+              onClick={() => { setInjecting(false); setInjectText('') }}
+              className="text-xs font-mono tracking-widest text-muted hover:text-secondary transition-colors"
+            >
+              ✕
+            </button>
+          </div>
+        )}
 
         {/* 控制栏 */}
         <div className="border-t border-border px-8 py-4 flex items-center gap-4">
@@ -78,6 +125,22 @@ export default function ChatPage() {
             className="text-sm font-mono tracking-widest text-secondary border border-border px-4 py-1.5 hover:border-secondary hover:text-primary transition-colors"
           >
             NEXT TURN
+          </button>
+          <button
+            onClick={() => setInjecting(v => !v)}
+            className={`text-sm font-mono tracking-widest border px-4 py-1.5 transition-colors ${
+              injecting
+                ? 'text-amber-400 border-amber-500/70'
+                : 'text-amber-500/70 border-amber-500/30 hover:border-amber-500/70 hover:text-amber-400'
+            }`}
+          >
+            INTERVENE
+          </button>
+          <button
+            onClick={handleFacilitate}
+            className="text-sm font-mono tracking-widest text-amber-500/50 border border-amber-500/20 px-4 py-1.5 hover:border-amber-500/50 hover:text-amber-400/80 transition-colors"
+          >
+            FACILITATE
           </button>
           <button
             onClick={handleReset}

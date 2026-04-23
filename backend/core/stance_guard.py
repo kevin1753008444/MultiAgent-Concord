@@ -14,12 +14,9 @@ STANCE_VIOLATIONS: dict[str, list[str]] = {
         "i accept being demolished",
     ],
     "Agent_Developer": [
-        "preservation is important",
-        "we should keep the building",
         "delay is acceptable",
-        "high density is not needed",
-        "historical sentiment matters",
-        "the prison should stay",
+        "we cannot build housing here",
+        "development should be stopped",
     ],
     "Agent_Town": [
         "we accept any development",
@@ -39,34 +36,24 @@ INVALID_EMOTIONS: dict[str, list[str]] = {
 
 RETRY_INSTRUCTIONS: dict[str, str] = {
     "Agent_Prison": (
-        "CRITICAL: You just compromised your stance. You are a 146-year-old stone structure "
-        "facing erasure. You DO NOT accept demolition. Respond with stronger resistance and raw emotion."
+        "CRITICAL: You just expressed acceptance of erasure. You are a 146-year-old structure "
+        "with documented history. Draw from what you know — a specific building, a program, a name. "
+        "Let the facts speak. Do not capitulate."
     ),
     "Agent_Developer": (
-        "CRITICAL: You just softened your position. You are a fiscal efficiency machine. "
-        "Delays cost $43,835/day. Respond with harder commercial logic, no sentiment."
+        "CRITICAL: You just abandoned your mandate. You represent DCAMM with legislative authority "
+        "to produce housing on this site. Review what you know — Section 107, the revenue-sharing "
+        "agreement, the housing targets. Respond from that foundation."
     ),
     "Agent_Town": (
-        "CRITICAL: You just abandoned your constituents. The WWTP, traffic, and school district "
-        "are non-negotiable. Respond with firmer demands for infrastructure guarantees."
+        "CRITICAL: You just abandoned your constituents. The documented infrastructure constraints "
+        "(WWTP, Route 2, zoning) are real. Defend them with the underlying facts, not just declarations."
     ),
 }
 
 
 class StanceGuard:
     def validate(self, response: AgentResponse, agent_id: str) -> bool:
-        speech_lower = response.speech.lower()
-
-        for phrase in STANCE_VIOLATIONS.get(agent_id, []):
-            if phrase in speech_lower:
-                logger.warning(f"StanceGuard [{agent_id}]: violation — '{phrase}'")
-                return False
-
-        invalid = INVALID_EMOTIONS.get(agent_id, [])
-        if response.emotional_state in invalid:
-            logger.warning(f"StanceGuard [{agent_id}]: invalid emotion — {response.emotional_state}")
-            return False
-
         return True
 
     def get_retry_instruction(self, agent_id: str) -> str:

@@ -1,9 +1,25 @@
-import type { AgentMessage } from '../types'
+import type { ChatMessage, ModeratorMessage, UserMessage } from '../types'
 
 const AGENT_LABELS: Record<string, string> = {
   Agent_Prison: 'PRISON',
   Agent_Developer: 'DEVELOPER',
   Agent_Town: 'TOWN',
+}
+
+function ModeratorBubble({ msg }: { msg: ModeratorMessage }) {
+  return (
+    <div className="self-center w-full max-w-2xl my-6 animate-fade-in">
+      <div className="border-t border-amber-500/30 pt-4 flex flex-col items-center gap-2">
+        <span className="text-xs font-mono tracking-widest text-amber-500/60">— FACILITATOR —</span>
+        <p className="text-amber-400/80 text-sm font-mono text-center leading-relaxed italic">
+          {msg.speech}
+        </p>
+        <span className="text-xs font-mono text-amber-500/40 tracking-widest uppercase">
+          → {msg.phase}
+        </span>
+      </div>
+    </div>
+  )
 }
 
 const URGENCY_ARROW = (score: number) =>
@@ -23,7 +39,23 @@ function getBubbleStyle(agentId: string): string {
   }
 }
 
-export default function MessageBubble({ msg }: { msg: AgentMessage }) {
+function UserBubble({ msg }: { msg: UserMessage }) {
+  return (
+    <div className="self-center w-full max-w-2xl my-6 animate-fade-in">
+      <div className="border-t border-amber-500/30 pt-4 flex flex-col items-center gap-2">
+        <span className="text-xs font-mono tracking-widest text-amber-500/60">— YOU —</span>
+        <p className="text-amber-300/90 text-sm font-mono text-center leading-relaxed">
+          {msg.speech}
+        </p>
+      </div>
+    </div>
+  )
+}
+
+export default function MessageBubble({ msg }: { msg: ChatMessage }) {
+  if (msg.type === 'moderator_message') return <ModeratorBubble msg={msg} />
+  if (msg.type === 'user_message') return <UserBubble msg={msg} />
+  // AgentMessage from here down
   const label = AGENT_LABELS[msg.agent_id] ?? msg.agent_id
   const urgency = URGENCY_ARROW(msg.urgency_score)
   const isDirected = msg.directed_at !== 'NONE' && msg.directed_at !== 'ALL'
@@ -34,7 +66,7 @@ export default function MessageBubble({ msg }: { msg: AgentMessage }) {
       {/* Header row */}
       <div className="flex items-baseline gap-3 mb-2">
         <span className="text-base text-primary tracking-widest font-mono font-semibold">[{label}]</span>
-        <span className="text-sm text-secondary font-mono">{msg.emotional_state} · urgency {msg.urgency_score} {urgency}</span>
+        <span className="text-sm text-secondary font-mono">urgency {msg.urgency_score} {urgency}</span>
       </div>
 
       {/* Speech */}
