@@ -1,8 +1,11 @@
 import { useEffect, useRef, useCallback } from 'react'
 import { useConversationStore } from '../store/conversationStore'
-import type { WsMessage } from '../types'
+import type { AgentId, WsMessage } from '../types'
 
-const WS_URL = `ws://${window.location.host}/ws`
+const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+const WS_URL = `${wsProtocol}//${window.location.host}/ws`
+const HEARTBEAT_MS = 15000
+const RECONNECT_MS = 2500
 
 // ── Audio queue ────────────────────────────────────────────────────────────
 // Plays base64 MP3 clips sequentially so agent voices never overlap.
@@ -25,17 +28,38 @@ function drainQueue() {
 }
 // ──────────────────────────────────────────────────────────────────────────
 
-export function useWebSocket() {
+interface WebSocketOptions {
+  playAudio?: boolean
+  audioFilterAgentId?: AgentId
+}
+
+export function useWebSocket(options: WebSocketOptions = {}) {
+  const { playAudio = true, audioFilterAgentId } = options
   const wsRef = useRef<WebSocket | null>(null)
-  const { addMessage, addModeratorMessage, addUserMessage, setThinking, setWeather, setWsConnected, reset } = useConversationStore()
+  const heartbeatRef = useRef<number | null>(null)
+  const reconnectRef = useRef<number | null>(null)
+  const shouldReconnectRef = useRef(true)
+  const {
+    addMessage,
+    addModeratorMessage,
+    addUserMessage,
+    setThinking,
+    setWeather,
+    setWsConnected,
+    setLastWsEvent,
+    reset,
+  } = useConversationStore()
 
   const handleMessage = useCallback((event: MessageEvent) => {
     try {
       const data: WsMessage = JSON.parse(event.data)
+      setLastWsEvent(data.type)
       switch (data.type) {
         case 'agent_message':
           addMessage(data)
-          if (data.audio_data) enqueueAudio(data.audio_data)
+          if (playAudio && data.audio_data && (!audioFilterAgentId || data.agent_id === audioFilterAgentId)) {
+            enqueueAudio(data.audio_data)
+          }
           break
         case 'moderator_message':
           addModeratorMessage(data)
@@ -56,18 +80,64 @@ export function useWebSocket() {
     } catch (e) {
       console.error('WS parse error', e)
     }
-  }, [addMessage, addModeratorMessage, addUserMessage, setThinking, setWeather, reset])
+  }, [
+    addMessage,
+    addModeratorMessage,
+    addUserMessage,
+    audioFilterAgentId,
+    playAudio,
+    reset,
+    setLastWsEvent,
+    setThinking,
+    setWeather,
+  ])
 
   useEffect(() => {
-    const ws = new WebSocket(WS_URL)
-    wsRef.current = ws
-    ws.onmessage = handleMessage
-    ws.onopen = () => { setWsConnected(true); console.log('WS connected') }
-    ws.onclose = () => setWsConnected(false)
-    ws.onerror = (e) => console.error('WS error', e)
+    shouldReconnectRef.current = true
 
-    return () => ws.close()
-  }, [handleMessage, setWsConnected])
+    function clearHeartbeat() {
+      if (heartbeatRef.current) {
+        window.clearInterval(heartbeatRef.current)
+        heartbeatRef.current = null
+      }
+    }
+
+    function connect() {
+      const ws = new WebSocket(WS_URL)
+      wsRef.current = ws
+      ws.onmessage = handleMessage
+      ws.onopen = () => {
+        setWsConnected(true)
+        setLastWsEvent('connected')
+        clearHeartbeat()
+        heartbeatRef.current = window.setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'ping' }))
+          }
+        }, HEARTBEAT_MS)
+      }
+      ws.onclose = () => {
+        clearHeartbeat()
+        setWsConnected(false)
+        setLastWsEvent('disconnected')
+        if (shouldReconnectRef.current) {
+          reconnectRef.current = window.setTimeout(connect, RECONNECT_MS)
+        }
+      }
+      ws.onerror = () => {
+        setLastWsEvent('error')
+      }
+    }
+
+    connect()
+
+    return () => {
+      shouldReconnectRef.current = false
+      clearHeartbeat()
+      if (reconnectRef.current) window.clearTimeout(reconnectRef.current)
+      wsRef.current?.close()
+    }
+  }, [handleMessage, setLastWsEvent, setWsConnected])
 
   const send = useCallback((data: object) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {

@@ -6,6 +6,9 @@
 # Runtime data
 data/chroma_db/
 data/concord.db
+*-dev.log
+*-dev.err.log
+frontend/public/agent-assets/
 
 # Python
 __pycache__/
@@ -20,4 +23,5 @@ frontend/dist/
 # IDE & tools
 .claude/
 .vscode/
+.exhibition-browser-profile/
 *.swp

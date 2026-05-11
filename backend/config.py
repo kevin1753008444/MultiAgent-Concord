@@ -9,15 +9,16 @@ load_dotenv(BASE_DIR / ".env")
 VERTEX_API_KEY = os.getenv("VERTEX_API_KEY", "")
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
+ELEVENLABS_MODEL = os.getenv("ELEVENLABS_MODEL", "eleven_turbo_v2_5")
 
 # ElevenLabs voice IDs per agent
 # Prison  → Adam  (deep, worn)
 # Developer → Arnold (crisp, authoritative)
 # Town    → Thomas (measured, calm)
 ELEVENLABS_VOICES: dict[str, str] = {
-    "Agent_Prison":    "CwhRBWXzGAHq8TQ4Fs17",  # Roger
-    "Agent_Developer": "IKne3meq5aSn9XLyUdCD", #Charlie
-    "Agent_Town":      "cgSgspJ2msm6clMCkdW9", # Jessica
+    "Agent_Prison": os.getenv("ELEVENLABS_VOICE_AGENT_PRISON", "CwhRBWXzGAHq8TQ4Fs17"),
+    "Agent_Developer": os.getenv("ELEVENLABS_VOICE_AGENT_DEVELOPER", "IKne3meq5aSn9XLyUdCD"),
+    "Agent_Town": os.getenv("ELEVENLABS_VOICE_AGENT_TOWN", "cgSgspJ2msm6clMCkdW9"),
 }
 
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR}/data/concord.db")
@@ -49,6 +50,7 @@ RAG_KNOWLEDGEBASE_DIR = os.getenv(
     "RAG_KNOWLEDGEBASE_DIR",
     str(BASE_DIR / "RAGKnowledgebase")
 )
+AGENT_ASSET_DIR = Path(os.getenv("AGENT_ASSET_DIR", str(BASE_DIR / "frontend" / "public" / "agent-assets")))
 
 BOSTON_COORDS = {"lat": 42.3601, "lon": -71.0589}
 WEATHER_CACHE_TTL = 300  # 5 minutes

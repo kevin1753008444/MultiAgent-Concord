@@ -1,8 +1,9 @@
+import re
 import shutil
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
-from backend.config import RAG_KNOWLEDGEBASE_DIR, AGENT_KB_DIRS, AGENT_IDS
+from backend.config import AGENT_ASSET_DIR, RAG_KNOWLEDGEBASE_DIR, AGENT_KB_DIRS, AGENT_IDS
 from backend.models.schemas import NegotiationPhase
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -21,6 +22,48 @@ class UpdatePromptRequest(BaseModel):
 
 class SetPhaseRequest(BaseModel):
     phase: NegotiationPhase
+
+
+VISUAL_MODES = {"idle", "thinking", "speaking"}
+VISUAL_EMOTIONS = {"neutral", "uneasy", "angry"}
+ASSET_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".webm"}
+VIDEO_SUFFIXES = {".mp4", ".webm"}
+
+
+def _safe_filename(filename: str) -> str:
+    stem = Path(filename).stem.strip() or "asset"
+    suffix = Path(filename).suffix.lower()
+    safe_stem = re.sub(r"[^A-Za-z0-9._-]+", "-", stem).strip(".-") or "asset"
+    return f"{safe_stem}{suffix}"
+
+
+def _validate_asset_slot(agent_id: str, mode: str, emotion: str) -> None:
+    if agent_id not in AGENT_IDS:
+        raise HTTPException(404, f"Agent {agent_id} not found")
+    if mode not in VISUAL_MODES:
+        raise HTTPException(400, f"Unsupported mode: {mode}")
+    if emotion not in VISUAL_EMOTIONS:
+        raise HTTPException(400, f"Unsupported emotion: {emotion}")
+
+
+def _asset_payload(agent_id: str, mode: str, emotion: str, path: Path) -> dict:
+    suffix = path.suffix.lower()
+    return {
+        "agent_id": agent_id,
+        "mode": mode,
+        "emotion": emotion,
+        "filename": path.name,
+        "url": f"/agent-assets/{agent_id}/{mode}/{emotion}/{path.name}",
+        "media_type": "video" if suffix in VIDEO_SUFFIXES else "image",
+    }
+
+
+def _find_asset_file(agent_id: str, mode: str, emotion: str) -> Path | None:
+    slot_dir = AGENT_ASSET_DIR / agent_id / mode / emotion
+    if not slot_dir.exists():
+        return None
+    files = sorted(item for item in slot_dir.iterdir() if item.is_file() and item.suffix.lower() in ASSET_SUFFIXES)
+    return files[0] if files else None
 
 
 # ─── Negotiation Phase ───────────────────────────────
@@ -62,6 +105,55 @@ async def update_agent_prompt(agent_id: str, req: UpdatePromptRequest):
         raise HTTPException(404, f"Agent {agent_id} not found")
     _orchestrator.update_agent_prompt(agent_id, req.system_prompt)
     return {"ok": True, "agent_id": agent_id}
+
+
+# Agent visual asset management
+
+@router.get("/agent-assets")
+async def list_agent_assets():
+    result = {}
+    for agent_id in AGENT_IDS:
+        result[agent_id] = {}
+        for mode in sorted(VISUAL_MODES):
+            result[agent_id][mode] = {}
+            for emotion in sorted(VISUAL_EMOTIONS):
+                asset = _find_asset_file(agent_id, mode, emotion)
+                if asset:
+                    result[agent_id][mode][emotion] = _asset_payload(agent_id, mode, emotion, asset)
+    return result
+
+
+@router.post("/agent-assets/{agent_id}/{mode}/{emotion}")
+async def upload_agent_asset(agent_id: str, mode: str, emotion: str, file: UploadFile = File(...)):
+    _validate_asset_slot(agent_id, mode, emotion)
+    filename = _safe_filename(file.filename or "asset")
+    suffix = Path(filename).suffix.lower()
+    if suffix not in ASSET_SUFFIXES:
+        raise HTTPException(400, f"Unsupported format: {suffix}. Use image, .mp4, or .webm")
+
+    slot_dir = AGENT_ASSET_DIR / agent_id / mode / emotion
+    slot_dir.mkdir(parents=True, exist_ok=True)
+    for existing in slot_dir.iterdir():
+        if existing.is_file():
+            existing.unlink(missing_ok=True)
+
+    dest = slot_dir / filename
+    with open(dest, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+    return {"ok": True, "asset": _asset_payload(agent_id, mode, emotion, dest)}
+
+
+@router.delete("/agent-assets/{agent_id}/{mode}/{emotion}")
+async def delete_agent_asset(agent_id: str, mode: str, emotion: str):
+    _validate_asset_slot(agent_id, mode, emotion)
+    slot_dir = AGENT_ASSET_DIR / agent_id / mode / emotion
+    deleted = 0
+    if slot_dir.exists():
+        for existing in slot_dir.iterdir():
+            if existing.is_file():
+                existing.unlink(missing_ok=True)
+                deleted += 1
+    return {"ok": True, "deleted": deleted}
 
 
 # ─── RAG 知识库管理 ──────────────────────────────────

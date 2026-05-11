@@ -74,7 +74,7 @@ async def websocket_endpoint(ws: WebSocket):
 
             elif msg_type == "reset":
                 orchestrator.reset()
-                await ws.send_json({"type": "reset_ack"})
+                await manager.broadcast({"type": "reset_ack"})
 
             elif msg_type == "ping":
                 await ws.send_json({"type": "pong"})

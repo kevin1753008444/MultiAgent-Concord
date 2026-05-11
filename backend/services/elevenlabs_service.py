@@ -8,7 +8,7 @@ import backend.config as cfg
 logger = logging.getLogger(__name__)
 
 _BASE_URL = "https://api.elevenlabs.io/v1"
-_MODEL = "eleven_turbo_v2_5"
+_MODEL = cfg.ELEVENLABS_MODEL
 
 
 async def log_available_voices() -> None:
