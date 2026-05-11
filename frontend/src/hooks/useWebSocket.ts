@@ -11,6 +11,7 @@ const RECONNECT_MS = 2500
 // Plays base64 MP3 clips sequentially so agent voices never overlap.
 const audioQueue: string[] = []
 let audioPlaying = false
+let currentAudio: HTMLAudioElement | null = null
 
 function enqueueAudio(base64Mp3: string) {
   audioQueue.push(base64Mp3)
@@ -19,12 +20,23 @@ function enqueueAudio(base64Mp3: string) {
 
 function drainQueue() {
   const next = audioQueue.shift()
-  if (!next) { audioPlaying = false; return }
+  if (!next) { audioPlaying = false; currentAudio = null; return }
   audioPlaying = true
   const audio = new Audio(`data:audio/mpeg;base64,${next}`)
+  currentAudio = audio
   audio.onended = drainQueue
-  audio.onerror = drainQueue  // skip broken clips, keep going
+  audio.onerror = drainQueue
   audio.play().catch(drainQueue)
+}
+
+export function stopAudio() {
+  audioQueue.length = 0
+  if (currentAudio) {
+    currentAudio.pause()
+    currentAudio.src = ''
+    currentAudio = null
+  }
+  audioPlaying = false
 }
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -47,6 +59,7 @@ export function useWebSocket(options: WebSocketOptions = {}) {
     setWeather,
     setWsConnected,
     setLastWsEvent,
+    setTranscribingText,
     reset,
   } = useConversationStore()
 
@@ -73,6 +86,9 @@ export function useWebSocket(options: WebSocketOptions = {}) {
         case 'weather_update':
           setWeather(data.data)
           break
+        case 'user_transcribing':
+          setTranscribingText(data.is_final ? null : data.text ?? null)
+          break
         case 'reset_ack':
           reset()
           break
@@ -89,6 +105,7 @@ export function useWebSocket(options: WebSocketOptions = {}) {
     reset,
     setLastWsEvent,
     setThinking,
+    setTranscribingText,
     setWeather,
   ])
 

@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { useConversationStore } from '../store/conversationStore'
 import { useWebSocket } from '../hooks/useWebSocket'
+import { useMicInput } from '../hooks/useMicInput'
 import WeatherBar from '../components/WeatherBar'
 import AgentIndicator from '../components/AgentIndicator'
 import MessageBubble from '../components/MessageBubble'
@@ -13,6 +14,12 @@ export default function ChatPage() {
   const [injecting, setInjecting] = useState(false)
   const [injectText, setInjectText] = useState('')
 
+  const handleVoiceTranscript = useCallback((text: string) => {
+    send({ type: 'user_inject', text })
+  }, [send])
+
+  const { micState, toggle: toggleMic, stop: stopMic } = useMicInput(handleVoiceTranscript)
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
@@ -20,6 +27,19 @@ export default function ChatPage() {
   useEffect(() => {
     if (injecting) inputRef.current?.focus()
   }, [injecting])
+
+  useEffect(() => {
+    if (!isAutoMode) return
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.code !== 'Space') return
+      const tag = (e.target as HTMLElement).tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      e.preventDefault()
+      toggleMic()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [isAutoMode, toggleMic])
 
   function handleStartAuto() {
     send({ type: 'start_auto_mode', interval_seconds: 20 })
@@ -29,6 +49,7 @@ export default function ChatPage() {
   function handleStop() {
     send({ type: 'stop_auto_mode' })
     setAutoMode(false)
+    stopMic()
   }
 
   function handleTrigger() {
@@ -142,6 +163,24 @@ export default function ChatPage() {
           >
             FACILITATE
           </button>
+          {isAutoMode && (
+            <>
+              <button
+                onClick={toggleMic}
+                title={micState === 'muted' ? 'Unmute mic' : micState === 'pending' ? 'Holding…' : 'Listening — click to mute'}
+                className={`text-sm font-mono tracking-widest border px-4 py-1.5 transition-colors flex items-center gap-2 ${
+                  micState === 'muted'
+                    ? 'text-zinc-500 border-zinc-600 hover:border-zinc-400 hover:text-zinc-300'
+                    : micState === 'pending'
+                    ? 'text-yellow-400 border-yellow-500/60'
+                    : 'text-red-400 border-red-500/70 animate-pulse'
+                }`}
+              >
+                {micState === 'muted' ? '🎙 MIC OFF' : micState === 'pending' ? '🎙 HOLD…' : '🔴 LISTENING'}
+              </button>
+              <span className="text-xs font-mono text-zinc-600">SPACE</span>
+            </>
+          )}
           <button
             onClick={handleReset}
             className="text-sm font-mono tracking-widest text-muted px-4 py-1.5 hover:text-secondary transition-colors ml-auto"

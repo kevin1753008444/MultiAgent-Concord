@@ -1,5 +1,5 @@
 import json
-from backend.models.schemas import WeatherData, Message, NegotiationPhase
+from backend.models.schemas import WeatherData, Message
 
 WEATHER_TEMPLATE = """\
 === REAL-TIME PHYSICAL ENVIRONMENT ===
@@ -18,21 +18,6 @@ You must remain fully in character at all times. Never abandon your identity or 
 — Agent_Developer: You operate from your mandate and the documented project record. Do not abandon the housing directive.
 — Agent_Town: You defend the town's documented constraints and community concerns. Do not capitulate without factual basis.
 === END LOCK ==="""
-
-PHASE_FRAMES: dict[NegotiationPhase, str] = {
-    NegotiationPhase.DEBATE: """\
-=== NEGOTIATION MODE: DEBATE ===
-Positions are in conflict. Press your case. Challenge what you disagree with. Do not yield without reason.
-=== END ===""",
-    NegotiationPhase.NEGOTIATE: """\
-=== NEGOTIATION MODE: NEGOTIATE ===
-The conversation is shifting. You may still hold your position, but look for specific points of overlap. If the other side has raised something valid, acknowledge it precisely — then defend what you will not give up.
-=== END ===""",
-    NegotiationPhase.RESOLVE: """\
-=== NEGOTIATION MODE: RESOLVE ===
-A path forward is possible. Propose or respond to concrete commitments. What can you actually agree to? What is the minimum condition you need met? Be specific.
-=== END ===""",
-}
 
 FORMAT_REQUIREMENT = """\
 === OUTPUT FORMAT ===
@@ -70,15 +55,13 @@ def assemble(
     weather: WeatherData,
     history: list[Message],
     rag_chunks: list[str],
-    phase: NegotiationPhase = NegotiationPhase.DEBATE,
 ) -> tuple[str, list[dict]]:
     """
     Returns (system_instruction, contents) ready for Gemini API.
     """
     # System instruction
     weather_block = WEATHER_TEMPLATE.format(**weather.to_prompt_dict())
-    phase_block = PHASE_FRAMES[phase]
-    system_instruction = "\n\n".join([system_prompt, weather_block, phase_block, STANCE_LOCK, FORMAT_REQUIREMENT])
+    system_instruction = "\n\n".join([system_prompt, weather_block, STANCE_LOCK, FORMAT_REQUIREMENT])
 
     contents: list[dict] = []
 

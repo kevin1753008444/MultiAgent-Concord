@@ -17,6 +17,7 @@ interface ConversationState {
   isAutoMode: boolean
   wsConnected: boolean
   lastWsEvent: string | null
+  transcribingText: string | null
 
   addMessage: (msg: AgentMessage) => void
   addModeratorMessage: (msg: ModeratorMessage) => void
@@ -27,6 +28,7 @@ interface ConversationState {
   setAutoMode: (val: boolean) => void
   setWsConnected: (val: boolean) => void
   setLastWsEvent: (val: string | null) => void
+  setTranscribingText: (text: string | null) => void
   reset: () => void
 }
 
@@ -59,7 +61,6 @@ function historyToChatMessage(msg: HistoryMessage): ChatMessage | null {
     return {
       type: 'moderator_message',
       speech: msg.speech,
-      phase: 'unknown',
       timestamp,
     }
   }
@@ -80,6 +81,7 @@ export const useConversationStore = create<ConversationState>((set) => ({
   isAutoMode: false,
   wsConnected: false,
   lastWsEvent: null,
+  transcribingText: null,
 
   addMessage: (msg) => set((s) => ({ messages: [...s.messages, msg], thinkingAgent: null })),
   addModeratorMessage: (msg) => set((s) => ({ messages: [...s.messages, msg] })),
@@ -92,5 +94,6 @@ export const useConversationStore = create<ConversationState>((set) => ({
   setAutoMode: (val) => set({ isAutoMode: val }),
   setWsConnected: (val) => set({ wsConnected: val }),
   setLastWsEvent: (val) => set({ lastWsEvent: val }),
+  setTranscribingText: (text) => set({ transcribingText: text }),
   reset: () => set({ messages: [], thinkingAgent: null }),
 }))

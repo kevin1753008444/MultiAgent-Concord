@@ -31,7 +31,7 @@ cd MultiAgent_Concord_Claude_1
 # Backend
 python -m venv .venv
 # Windows:
-.venv\Scripts\pip install -r backend/requirements.txt
+.\.venv\Scripts\pip install -r backend/requirements.txt
 # macOS/Linux:
 # .venv/bin/pip install -r backend/requirements.txt
 
@@ -55,7 +55,7 @@ Edit `.env` and fill in:
 
 ```bash
 # Windows:
-.venv\Scripts\python -m uvicorn backend.main:app --reload --port 8000
+.\.venv\Scripts\python -m uvicorn backend.main:app --reload --port 8000
 
 # macOS/Linux:
 # .venv/bin/uvicorn backend.main:app --reload --port 8000

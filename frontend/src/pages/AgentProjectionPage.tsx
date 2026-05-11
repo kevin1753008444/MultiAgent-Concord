@@ -56,24 +56,30 @@ function getLatestAgentMessage(messages: ChatMessage[], agentId?: AgentId): Agen
 }
 
 function getReplyMeta(message: AgentMessage, messages: ChatMessage[]) {
-  if (message.directed_at === 'ALL') return { label: 'All agents', excerpt: 'Open address to the room' }
   if (message.directed_at === 'NONE') return null
 
   const currentTime = new Date(message.timestamp).getTime()
+
+  if (message.directed_at === 'ALL') {
+    // Show what triggered this open address — only if it was the human speaking
+    for (let index = messages.length - 1; index >= 0; index--) {
+      const item = messages[index]
+      if (new Date(item.timestamp).getTime() >= currentTime) continue
+      if (item.type === 'user_message') return { label: 'Facilitator', excerpt: summarize(item.speech) }
+      return null // last message was an agent — no chip needed
+    }
+    return null
+  }
+
+  // directed_at is a specific agent — find their most recent prior message
   for (let index = messages.length - 1; index >= 0; index--) {
     const item = messages[index]
-    if (!isAgentMessage(item)) continue
-    if (item.agent_id !== message.directed_at) continue
     if (new Date(item.timestamp).getTime() >= currentTime) continue
-    return {
-      label: getDisplayByAgent(item.agent_id).label,
-      excerpt: summarize(item.speech),
+    if (item.type === 'agent_message' && item.agent_id === message.directed_at) {
+      return { label: getDisplayByAgent(item.agent_id).label, excerpt: summarize(item.speech) }
     }
   }
-  return {
-    label: getDisplayByAgent(message.directed_at).label,
-    excerpt: 'Previous position from this agent',
-  }
+  return null
 }
 
 function getAgentStatuses(messages: ChatMessage[], thinkingAgent: AgentId | null, now: number): Record<AgentId, AgentStatus> {
@@ -128,6 +134,7 @@ export default function AgentProjectionPage() {
   const messages = useConversationStore((s) => s.messages)
   const thinkingAgent = useConversationStore((s) => s.thinkingAgent)
   const wsConnected = useConversationStore((s) => s.wsConnected)
+  const transcribingText = useConversationStore((s) => s.transcribingText)
   const [flashKey, setFlashKey] = useState(0)
   const [now, setNow] = useState(() => Date.now())
   const [assets, setAssets] = useState<AgentAssetMap>({})
@@ -136,6 +143,27 @@ export default function AgentProjectionPage() {
   useWebSocket({ playAudio: true, audioFilterAgentId: display.id })
   useHydrateHistory()
   useExhibitionSettings()
+
+  // Relay space key to admin window via BroadcastChannel
+  useEffect(() => {
+    const channel = new BroadcastChannel('mci-space')
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.repeat || e.code !== 'Space') return
+      e.preventDefault()
+      channel.postMessage({ type: 'space_down' })
+    }
+    function onKeyUp(e: KeyboardEvent) {
+      if (e.code !== 'Space') return
+      channel.postMessage({ type: 'space_up' })
+    }
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+      channel.close()
+    }
+  }, [])
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 900)
@@ -175,6 +203,42 @@ export default function AgentProjectionPage() {
 
   return (
     <main className="projection-page">
+      {transcribingText !== null && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 50,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'rgba(20,20,20,0.72)',
+          backdropFilter: 'blur(2px)',
+          pointerEvents: 'none',
+        }}>
+          <div style={{
+            maxWidth: '72%',
+            textAlign: 'center',
+            padding: '2rem 2.5rem',
+            border: '1px solid rgba(251,191,36,0.25)',
+            background: 'rgba(10,10,10,0.6)',
+          }}>
+            <p style={{
+              fontFamily: 'monospace',
+              fontSize: '0.7rem',
+              letterSpacing: '0.15em',
+              color: 'rgba(251,191,36,0.5)',
+              marginBottom: '0.75rem',
+            }}>— HUMAN SPEAKING —</p>
+            <p style={{
+              fontFamily: 'monospace',
+              fontSize: '1.35rem',
+              lineHeight: 1.6,
+              color: transcribingText ? 'rgba(255,255,255,0.88)' : 'rgba(255,255,255,0.3)',
+              fontStyle: transcribingText ? 'normal' : 'italic',
+            }}>{transcribingText || '…'}</p>
+          </div>
+        </div>
+      )}
       <div className="projection-status-board" aria-label="Agent status board">
         <div className="connection-line">
           <span className={wsConnected ? 'status-dot online' : 'status-dot'} />

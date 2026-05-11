@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from backend.models.schemas import AgentResponse, WeatherData, Message, NegotiationPhase
+from backend.models.schemas import AgentResponse, WeatherData, Message
 from backend.services.gemini_service import GeminiService
 from backend.core.prompt_assembler import assemble
 from backend.core.stance_guard import StanceGuard
@@ -39,7 +39,6 @@ class BaseAgent:
         history: list[Message],
         weather: WeatherData,
         rag_chunks: list[str] | None = None,
-        phase: NegotiationPhase = NegotiationPhase.DEBATE,
     ) -> AgentResponse | None:
         """
         生成一条发言，含立场验证和重试逻辑。
@@ -60,7 +59,6 @@ class BaseAgent:
                 weather=weather,
                 history=history,
                 rag_chunks=chunks,
-                phase=phase,
             )
 
             # 立场违规时提高 temperature

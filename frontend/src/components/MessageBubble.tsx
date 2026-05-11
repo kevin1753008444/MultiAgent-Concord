@@ -14,9 +14,7 @@ function ModeratorBubble({ msg }: { msg: ModeratorMessage }) {
         <p className="text-amber-400/80 text-sm font-mono text-center leading-relaxed italic">
           {msg.speech}
         </p>
-        <span className="text-xs font-mono text-amber-500/40 tracking-widest uppercase">
-          → {msg.phase}
-        </span>
+
       </div>
     </div>
   )

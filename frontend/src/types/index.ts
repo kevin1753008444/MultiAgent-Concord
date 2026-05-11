@@ -19,7 +19,6 @@ export interface AgentMessage {
 export interface ModeratorMessage {
   type: 'moderator_message'
   speech: string
-  phase: string
   timestamp: string
 }
 
@@ -75,3 +74,4 @@ export type WsMessage =
   | { type: 'routing_debug'; weights: Record<string, number>; selected: AgentId }
   | { type: 'reset_ack' }
   | { type: 'pong' }
+  | { type: 'user_transcribing'; text: string; is_final: boolean }

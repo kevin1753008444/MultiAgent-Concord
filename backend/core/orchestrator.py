@@ -14,7 +14,7 @@ from backend.services.elevenlabs_service import ElevenLabsService, log_available
 from backend.core.stance_guard import StanceGuard
 from backend.rag.vector_store import VectorStore
 from backend.rag.retriever import Retriever
-from backend.models.schemas import AgentResponse, Message, WeatherData, NegotiationPhase
+from backend.models.schemas import AgentResponse, Message, WeatherData
 from backend.config import SILENCE_FALLBACK, AUTO_MODE_INTERVAL, DEBUG
 
 logger = logging.getLogger(__name__)
@@ -51,10 +51,13 @@ class Orchestrator:
         self.history: list[Message] = []
         self.speaker_history: list[str] = []
         self._auto_task: asyncio.Task | None = None
+        self._current_turn_task: asyncio.Task | None = None
+        self._turn_interrupted: bool = False
         self._last_speaker: str = "Agent_Developer"
         self._rag_initialized: bool = False
         self._agent_knowledge: dict[str, list[str]] = {}
-        self.phase: NegotiationPhase = NegotiationPhase.DEBATE
+        self._resume_event: asyncio.Event = asyncio.Event()
+        self._resume_event.set()  # not paused by default
 
     # ─── Public API ───────────────────────────────────────────────
 
@@ -134,7 +137,6 @@ class Orchestrator:
             history=self.history,
             weather=weather,
             rag_chunks=rag_chunks,
-            phase=self.phase,
         )
 
         if response is None:
@@ -174,7 +176,6 @@ class Orchestrator:
             "directed_at": response.directed_at,
             "urgency_score": response.urgency_score,
             "implicit_challenge_to": response.implicit_challenge_to,
-            "phase": self.phase,
             "weather_snapshot": {
                 "condition": weather.condition,
                 "temp_f": weather.temp_f,
@@ -196,6 +197,14 @@ class Orchestrator:
             self._auto_task.cancel()
             self._auto_task = None
 
+    def pause(self) -> None:
+        self._resume_event.clear()
+        logger.info("Orchestrator paused")
+
+    def resume(self) -> None:
+        self._resume_event.set()
+        logger.info("Orchestrator resumed")
+
     def update_agent_prompt(self, agent_id: str, prompt: str) -> None:
         if agent_id in self.agents:
             self.agents[agent_id].set_system_prompt(prompt)
@@ -204,16 +213,14 @@ class Orchestrator:
         self.history.clear()
         self.speaker_history.clear()
         self._last_speaker = "Agent_Developer"
-        self.phase = NegotiationPhase.DEBATE
-
-    def set_phase(self, phase: NegotiationPhase) -> None:
-        """Manually override the negotiation phase (e.g. from admin panel)."""
-        old = self.phase
-        self.phase = phase
-        logger.info(f"Phase manually set: {old} → {phase}")
 
     async def inject_user_message(self, text: str) -> None:
-        """Inject a human message into the conversation that all agents will hear."""
+        """Inject a human message; cancels any in-progress agent turn so it re-thinks with user input."""
+        if self._current_turn_task and not self._current_turn_task.done():
+            self._turn_interrupted = True
+            self._current_turn_task.cancel()
+            logger.info("Cancelled in-progress agent turn due to user inject")
+
         self.history.append(Message(
             session_id=self.session_id,
             sender="USER",
@@ -235,29 +242,12 @@ class Orchestrator:
         "No jargon. No pleasantries. Be direct."
     )
 
-    MODERATOR_PHASE_PROMPTS = {
-        NegotiationPhase.DEBATE: (
-            "The parties have stated their positions. "
-            "Intervene to surface what is actually at stake and open space for the next step."
-        ),
-        NegotiationPhase.NEGOTIATE: (
-            "Some tension has softened. "
-            "Intervene to push the parties toward a specific, concrete arrangement."
-        ),
-    }
-
     async def _inject_moderator(self) -> None:
-        """Generate a moderator intervention, inject it into history, and advance the phase."""
-        # Only intervene during DEBATE and NEGOTIATE — RESOLVE runs on its own
-        if self.phase == NegotiationPhase.RESOLVE:
-            return
-
-        # Build the prompt from recent history
+        """Generate a moderator intervention and inject it into history."""
         recent_lines = "\n".join(
             f"[{m.sender}]: {m.speech}" for m in self.history[-8:]
         )
-        phase_prompt = self.MODERATOR_PHASE_PROMPTS[self.phase]
-        prompt = f"Recent conversation:\n{recent_lines}\n\n{phase_prompt}"
+        prompt = f"Recent conversation:\n{recent_lines}"
 
         mod_text = await self.gemini.generate_text(
             system_instruction=self.MODERATOR_SYSTEM,
@@ -267,15 +257,8 @@ class Orchestrator:
         if not mod_text:
             return
 
-        # Advance phase before broadcasting so agents see the new phase framing
-        old_phase = self.phase
-        if self.phase == NegotiationPhase.DEBATE:
-            self.phase = NegotiationPhase.NEGOTIATE
-        elif self.phase == NegotiationPhase.NEGOTIATE:
-            self.phase = NegotiationPhase.RESOLVE
-        logger.info(f"Moderator fired: phase {old_phase} → {self.phase}")
+        logger.info("Moderator fired")
 
-        # Inject into history so all agents see it in their next prompt
         self.history.append(Message(
             session_id=self.session_id,
             sender="MODERATOR",
@@ -287,7 +270,6 @@ class Orchestrator:
         await self.broadcast({
             "type": "moderator_message",
             "speech": mod_text,
-            "phase": self.phase,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
 
@@ -300,7 +282,20 @@ class Orchestrator:
     async def _auto_loop(self, interval: int) -> None:
         try:
             while True:
-                await self.trigger_one_turn()
+                await self._resume_event.wait()  # hold here while paused
+                self._turn_interrupted = False
+                self._current_turn_task = asyncio.create_task(self.trigger_one_turn())
+                try:
+                    await self._current_turn_task
+                except asyncio.CancelledError:
+                    if self._turn_interrupted:
+                        # User injected mid-turn — loop immediately so next turn
+                        # picks up the user message without waiting for interval
+                        logger.info("Turn interrupted by user inject — re-triggering")
+                        continue
+                    raise  # outer loop is stopping, propagate
+                finally:
+                    self._current_turn_task = None
                 await asyncio.sleep(interval)
         except asyncio.CancelledError:
             logger.info("Auto mode stopped")

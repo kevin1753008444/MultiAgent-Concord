@@ -1,14 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AGENT_DISPLAYS, DISPLAY_ORDER, getDisplayByAgent } from '../agents'
 import AgentAssetManager from '../components/admin/AgentAssetManager'
 import KnowledgeManager from '../components/admin/KnowledgeManager'
 import { useExhibitionSettings } from '../hooks/useExhibitionSettings'
 import { useHydrateHistory } from '../hooks/useHydrateHistory'
-import { useWebSocket } from '../hooks/useWebSocket'
+import { useMicInput, type MicMode } from '../hooks/useMicInput'
+import { useWebSocket, stopAudio } from '../hooks/useWebSocket'
 import { useConversationStore } from '../store/conversationStore'
 import type { AgentId } from '../types'
-
-type Phase = 'debate' | 'negotiate' | 'resolve'
 
 interface RagAgentStatus {
   total_chunks: number
@@ -17,7 +16,6 @@ interface RagAgentStatus {
 
 type RagStatus = Record<AgentId, RagAgentStatus>
 
-const PHASES: Phase[] = ['debate', 'negotiate', 'resolve']
 const projectionWindows: Record<string, Window | null> = {}
 
 function openProjectionWindows() {
@@ -59,14 +57,77 @@ export default function AdminPage() {
   const lastWsEvent = useConversationStore((s) => s.lastWsEvent)
   const resetLocal = useConversationStore((s) => s.reset)
 
-  const [phase, setPhase] = useState<Phase>('debate')
-  const [turn, setTurn] = useState(0)
   const [ragStatus, setRagStatus] = useState<RagStatus | null>(null)
   const [health, setHealth] = useState<{ status: string; ws_connections: number } | null>(null)
   const [prompts, setPrompts] = useState<Record<string, string>>({})
   const [selectedPrompt, setSelectedPrompt] = useState<AgentId>('Agent_Prison')
   const [draft, setDraft] = useState('')
   const [notice, setNotice] = useState('')
+  const [micMode, setMicMode] = useState<MicMode | null>(null)
+
+  const handleVoiceInject = useCallback((text: string) => {
+    send({ type: 'user_transcribing', text, is_final: true })
+    send({ type: 'user_inject', text })
+    send({ type: 'hold_end' })
+  }, [send])
+
+  const handleVoiceInterim = useCallback((text: string) => {
+    send({ type: 'user_transcribing', text, is_final: false })
+  }, [send])
+
+  const { micState, startHold, endHold } = useMicInput(micMode, handleVoiceInject, handleVoiceInterim)
+
+  // Space key (local) + BroadcastChannel relay from projection windows
+  useEffect(() => {
+    if (micMode !== 'keyboard') return
+
+    const channel = new BroadcastChannel('mci-space')
+
+    function onHoldStart() {
+      stopAudio()
+      startHold()
+      send({ type: 'hold_start' })
+      send({ type: 'user_transcribing', text: '', is_final: false })
+    }
+    function onHoldEnd() {
+      endHold()
+      // hold_end sent after transcript arrives via handleVoiceInject
+      // but send it now too in case user released without speaking
+      send({ type: 'hold_end' })
+    }
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.repeat) return
+      if (e.code !== 'Space') return
+      const tag = (e.target as HTMLElement).tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      e.preventDefault()
+      onHoldStart()
+    }
+    function onKeyUp(e: KeyboardEvent) {
+      if (e.code !== 'Space') return
+      onHoldEnd()
+    }
+
+    channel.onmessage = (e) => {
+      if (e.data?.type === 'space_down') onHoldStart()
+      if (e.data?.type === 'space_up') onHoldEnd()
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+      channel.close()
+    }
+  }, [micMode, startHold, endHold, send])
+
+  function cycleMicMode() {
+    setMicMode(prev =>
+      prev === null ? 'keyboard' : prev === 'keyboard' ? 'physical' : null
+    )
+  }
 
   const agentCounts = useMemo(() => {
     return DISPLAY_ORDER.map((key) => {
@@ -77,17 +138,12 @@ export default function AdminPage() {
   }, [messages])
 
   async function refreshBackendState(includePrompts = false) {
-    const [phaseResp, ragResp, healthResp, promptsResp] = await Promise.allSettled([
-      fetch('/api/admin/phase').then((r) => r.json()),
+    const [ragResp, healthResp, promptsResp] = await Promise.allSettled([
       fetch('/api/admin/rag/status').then((r) => r.json()),
       fetch('/health').then((r) => r.json()),
       includePrompts ? fetch('/api/admin/agents').then((r) => r.json()) : Promise.resolve(null),
     ])
 
-    if (phaseResp.status === 'fulfilled') {
-      setPhase(phaseResp.value.phase)
-      setTurn(phaseResp.value.turn)
-    }
     if (ragResp.status === 'fulfilled') setRagStatus(ragResp.value)
     if (healthResp.status === 'fulfilled') setHealth(healthResp.value)
     if (includePrompts && promptsResp.status === 'fulfilled' && promptsResp.value) {
@@ -122,18 +178,6 @@ export default function AdminPage() {
     resetLocal()
     setNotice('Reset sent to all exhibition windows.')
     window.setTimeout(() => setNotice(''), 2500)
-  }
-
-  async function changePhase(nextPhase: Phase) {
-    const response = await fetch('/api/admin/phase', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phase: nextPhase }),
-    })
-    if (response.ok) {
-      const data = await response.json()
-      setPhase(data.phase)
-    }
   }
 
   function selectPrompt(agentId: AgentId) {
@@ -191,6 +235,26 @@ export default function AdminPage() {
             </button>
           </div>
 
+          <div className="command-row" style={{ marginTop: '0.5rem', alignItems: 'center' }}>
+            <button
+              className="command-button"
+              onClick={cycleMicMode}
+              title="Cycle: OFF → KEYBOARD (space) → PHYSICAL (sound)"
+            >
+              {micMode === null ? '🎙 MIC: OFF' : micMode === 'keyboard' ? '⌨️ MIC: KEYBOARD' : '🔊 MIC: PHYSICAL'}
+            </button>
+            {micMode !== null && (
+              <span style={{
+                fontSize: '0.75rem',
+                fontFamily: 'monospace',
+                letterSpacing: '0.05em',
+                color: micState === 'listening' ? '#f87171' : micState === 'pending' ? '#facc15' : '#6b7280',
+              }}>
+                {micState === 'listening' ? '● LISTENING' : micState === 'pending' ? '◌ HOLD…' : '○ READY'}
+              </span>
+            )}
+          </div>
+
           <div className="force-grid">
             {DISPLAY_ORDER.map((key) => {
               const display = AGENT_DISPLAYS[key]
@@ -213,19 +277,10 @@ export default function AdminPage() {
 
         <div className="console-panel">
           <div className="panel-heading">
-            <span>Negotiation Phase</span>
-            <strong>{phase}</strong>
-          </div>
-          <div className="phase-switch">
-            {PHASES.map((item) => (
-              <button key={item} className={phase === item ? 'is-selected' : ''} onClick={() => changePhase(item)}>
-                {item}
-              </button>
-            ))}
+            <span>Session Status</span>
+            <strong>{messages.length} turns</strong>
           </div>
           <div className="phase-readout">
-            <span>turns</span>
-            <strong>{turn}</strong>
             <span>thinking</span>
             <strong>{thinkingAgent ? getDisplayByAgent(thinkingAgent).label : 'none'}</strong>
           </div>

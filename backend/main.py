@@ -64,6 +64,20 @@ async def websocket_endpoint(ws: WebSocket):
                 force = data.get("force_speaker")
                 await orchestrator.trigger_one_turn(force_speaker=force)
 
+            elif msg_type == "hold_start":
+                orchestrator.pause()
+
+            elif msg_type == "hold_end":
+                orchestrator.resume()
+
+            elif msg_type == "user_transcribing":
+                # Broadcast live transcription to all screens; no agent processing
+                await manager.broadcast({
+                    "type": "user_transcribing",
+                    "text": data.get("text", ""),
+                    "is_final": data.get("is_final", False),
+                })
+
             elif msg_type == "user_inject":
                 text = data.get("text", "").strip()
                 if text:

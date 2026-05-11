@@ -4,7 +4,6 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 from backend.config import AGENT_ASSET_DIR, RAG_KNOWLEDGEBASE_DIR, AGENT_KB_DIRS, AGENT_IDS
-from backend.models.schemas import NegotiationPhase
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -19,9 +18,6 @@ def set_orchestrator(orch) -> None:
 class UpdatePromptRequest(BaseModel):
     agent_id: str
     system_prompt: str
-
-class SetPhaseRequest(BaseModel):
-    phase: NegotiationPhase
 
 
 VISUAL_MODES = {"idle", "thinking", "speaking"}
@@ -64,25 +60,6 @@ def _find_asset_file(agent_id: str, mode: str, emotion: str) -> Path | None:
         return None
     files = sorted(item for item in slot_dir.iterdir() if item.is_file() and item.suffix.lower() in ASSET_SUFFIXES)
     return files[0] if files else None
-
-
-# ─── Negotiation Phase ───────────────────────────────
-
-@router.get("/phase")
-async def get_phase():
-    if not _orchestrator:
-        raise HTTPException(503, "Orchestrator not ready")
-    return {
-        "phase": _orchestrator.phase,
-        "turn": len(_orchestrator.history),
-    }
-
-@router.post("/phase")
-async def set_phase(req: SetPhaseRequest):
-    if not _orchestrator:
-        raise HTTPException(503, "Orchestrator not ready")
-    _orchestrator.set_phase(req.phase)
-    return {"ok": True, "phase": _orchestrator.phase}
 
 
 # ─── System Prompt 管理 ──────────────────────────────
