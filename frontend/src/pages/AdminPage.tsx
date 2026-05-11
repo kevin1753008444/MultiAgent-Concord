@@ -21,7 +21,6 @@ const projectionWindows: Record<string, Window | null> = {}
 function openProjectionWindows() {
   const features = [
     'popup=yes',
-    'noopener=no',
     'menubar=no',
     'toolbar=no',
     'location=no',
@@ -33,14 +32,22 @@ function openProjectionWindows() {
   ].join(',')
 
   DISPLAY_ORDER.forEach((key, index) => {
-    const left = 60 + index * 90
-    const top = 60 + index * 70
-    const existing = projectionWindows[key]
-    if (existing && !existing.closed) {
-      existing.focus()
-      return
-    }
-    projectionWindows[key] = window.open(`/screen/${key}`, `mci-concord-${key}`, `${features},left=${left},top=${top}`)
+    // Stagger each window.open by 150 ms — browsers require a small gap
+    // between calls to avoid the popup blocker killing the 2nd and 3rd window.
+    setTimeout(() => {
+      const existing = projectionWindows[key]
+      if (existing && !existing.closed) {
+        existing.focus()
+        return
+      }
+      const left = 40 + index * 100
+      const top = 40 + index * 60
+      projectionWindows[key] = window.open(
+        `/screen/${key}`,
+        `mci-concord-${key}`,
+        `${features},left=${left},top=${top}`,
+      )
+    }, index * 150)
   })
 }
 
@@ -226,9 +233,6 @@ export default function AdminPage() {
             </button>
             <button className="command-button" onClick={() => trigger()}>
               Next Turn
-            </button>
-            <button className="command-button" onClick={() => send({ type: 'moderator' })}>
-              Facilitate
             </button>
             <button className="command-button danger" onClick={resetAll}>
               Reset
